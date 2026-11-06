@@ -53,6 +53,8 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_BASEBAND_DUMP_FORMAT` | `1` | `1` = 16-bit samples, `2` = 12-bit packed (13.9 s per burst) |
 | `C62_TETRA` | `ON` | TETRA receive mode "T" (section 5), with libtetra |
 | `C62_TETRA_SPEECH` | `ON` | Play clear TETRA speech, with OpenACELP (section 5) |
+| `C62_DMR` | `ON` | DMR receive mode "DMR" (section 6) |
+| `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
 | `C62_REG43_SWEEP` | `OFF` | Cycle `REG_43` through 7 test values in M17 RX |
 | `C62_REG43_SWEEP_MS` | `1400` | Recorded time per sweep value (one burst covers all 7 values) |
 
@@ -148,7 +150,7 @@ holds 1.4 s each of `7808 7828 7e28 7e2c 7e38 7e20 fe28`. Split them with
 
 ## 5. TETRA mode
 
-Press **5** on the main screen to cycle the modes: FM, M17, T. In **T**
+Press **5** on the main screen to cycle the modes: FM, M17, T, DMR. In **T**
 mode the radio receives a TETRA TMO downlink (a base station, pi/4-DQPSK)
 and decodes it on the radio with
 [libtetra](https://github.com/sp5wwp/libtetra). It is receive only: PTT does
@@ -197,3 +199,43 @@ without it.
 
 The baseband dump keeps working in T mode, to capture what the radio
 receives.
+
+## 6. DMR mode
+
+**DMR** follows **T** under key **5**. The radio receives DMR in the clear:
+repeater outputs (both timeslots), simplex and hotspots. It is receive
+only: PTT does nothing. Tune to the repeater output or simplex frequency.
+
+The 48 kHz discriminator output, through the same flat, wide path as M17,
+goes to a software 4FSK demodulator (`openrtx/src/protocols/DMR/`): RRC
+matched filter, sync search by correlation against the 8 sync words, levels
+and offset fitted on the sync symbols (no AGC), then CACH, slot type,
+BPTC(196,96) + RS(12,9) LC headers and terminators, CSBK, EMB and embedded
+LC with the talker alias. The polarity is found by itself.
+
+| State | Line 1 | Line 2 | Rest |
+|---|---|---|---|
+| No signal | Demodulator figures | `DMR searching` | Frequency |
+| Locked | Demodulator figures | `DMR RPT CC<n>` (repeater), `MS` (simplex) or `DM` (direct mode) | Frequency |
+| Call | Talker alias, else source ID | `TG <n>`, or the called radio ID | Source ID or slot and colour code, then `Voice` / `Encrypted` |
+
+The demodulator figures on line 1, `L<level> <dc> o<lost>`: the level of the
+outer symbols and the DC offset, in ADC units, the sample blocks lost
+because the radio could not keep up (should stay 0), and `inv` when the
+symbols arrive inverted. The green LED is on while the radio is locked.
+Call events (start, IDs, alias, end) are also printed on the console.
+
+**Voice.** DMR speech is AMBE+2, decoded with
+[mbelib](https://github.com/lwvmobile/mbelib) (ISC licence). The AMBE+2
+algorithm is covered by patents in some countries, so mbelib is not fetched
+by default. Check that using it is lawful where you are, then:
+
+```bash
+OpenRTX/scripts/c62/fetch_mbelib.sh      # from the workspace folder
+```
+
+and build again: the build log says `DMR ON (voice ON)`. Only one slot is
+played: the first one to start talking, until its call ends. Encrypted
+calls are shown but not played. Line 4 shows the vocoder time per 20 ms
+frame (`Voice 3.2ms`). A firmware built with mbelib contains it.
+
