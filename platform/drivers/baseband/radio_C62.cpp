@@ -579,11 +579,14 @@ rssi_t radio_getRssi()
 /*
  * Spectrum sweep: the AGC frozen at the gain it starts from, so that the RSSI
  * of different frequencies compares, and the narrow channel filter for the
- * resolution. The settling time covers the PLL lock and the RSSI averaging.
+ * resolution. The settling time covers the PLL lock and the RSSI averaging,
+ * as in the UV-K5 spectrum (same delay, and the same wait on REG_63 <7:0>,
+ * which reads 255 until the chip has a new RSSI).
  */
 #ifndef C62_SPECTRUM_SETTLE_US
-#define C62_SPECTRUM_SETTLE_US 2000
+#define C62_SPECTRUM_SETTLE_US 3200
 #endif
+#define C62_SPECTRUM_READY_TRIES 10 /* 100 us apart */
 
 static uint16_t specSaved7E;
 static uint16_t specSaved13;
@@ -623,6 +626,11 @@ rssi_t radio_spectrumProbe(const freq_t freq)
     // Also restarts the receiver, which relocks the PLL
     bk4819_set_freq(&c62_bk4819, freq);
     k_usleep(C62_SPECTRUM_SETTLE_US);
+    for (int i = 0; i < C62_SPECTRUM_READY_TRIES; i++) {
+        if ((BK4819_readReg(&c62_bk4819, 0x63) & 0x00ff) != 0x00ff)
+            break;
+        k_busy_wait(100);
+    }
     return bk4819_get_rssi(&c62_bk4819);
 }
 
