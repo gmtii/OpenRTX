@@ -55,7 +55,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_TETRA_SPEECH` | `ON` | Play clear TETRA speech, with OpenACELP (section 5) |
 | `C62_DMR` | `ON` | DMR receive mode "DMR" (section 6) |
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
-| `C62_AM` | `ON` | AM receive mode "AM" and VHF down to 108 MHz, for the air band (section 7) |
+| `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
 | `C62_REG43_SWEEP` | `OFF` | Cycle `REG_43` through 7 test values in M17 RX |
 | `C62_REG43_SWEEP_MS` | `1400` | Recorded time per sweep value (one burst covers all 7 values) |
 
@@ -244,11 +244,9 @@ frame (`Voice 3.2ms`). A firmware built with mbelib contains it.
 
 **AM** follows **DMR** under key **5**. It receives AM with the BK4819's own
 AM detector, through the same audio path and RF squelch as FM, with the
-12.5 kHz channel filter. It is receive only. With this mode built in, the
-VHF band starts at 108 MHz, so the air band (108-137 MHz) can be tuned;
-the radio still never transmits below 136 MHz.
+12.5 kHz channel filter. It is receive only.
 
-The C62's VHF front end is meant for 136-174 MHz: below 136 MHz the
+The C62's VHF front end is meant for 136-174 MHz: in the air band the
 sensitivity is likely lower.
 
 The BK4819's AGC is tuned for FM: on a strong AM carrier it leaves the IF
@@ -263,4 +261,9 @@ console, at most once a second:
 AM gain -37 dB, RSSI -62 dBm
 ```
 
+## 8. Frequency range
 
+The radio receives on 18-660 MHz, the BK4819's continuous tuning range:
+the VHF LNA is used up to 174 MHz, the UHF LNA above. Both are made for
+136-174 and 400-480 MHz, so the sensitivity drops outside those bands.
+It only transmits on 136-174 and 400-480 MHz.

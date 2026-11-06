@@ -24,16 +24,16 @@ static const hwInfo_t hwInfo = {
     .hw_version = 0,
     .uhf_band = 1,
     .vhf_band = 1,
-    .uhf_maxFreq = 480,
-    .uhf_minFreq = 400,
+    /*
+     * Receive across the BK4819's continuous tuning range, 18-660 MHz,
+     * split at the 174 MHz switch between the VHF and UHF LNAs. The front
+     * end is made for 136-174 and 400-480 MHz: elsewhere it is less
+     * sensitive. The radio driver only transmits in those two bands.
+     */
+    .uhf_maxFreq = 660,
+    .uhf_minFreq = 174,
     .vhf_maxFreq = 174,
-#ifdef CONFIG_AM
-    /* Air band reception (108-137 MHz, AM); the radio driver keeps TX at
-     * 136 MHz and above */
-    .vhf_minFreq = 108,
-#else
-    .vhf_minFreq = 137,
-#endif
+    .vhf_minFreq = 18,
 };
 
 // ADC
