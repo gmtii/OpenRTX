@@ -13,10 +13,11 @@
  * Threads' stack sizes
  */
 #define UI_THREAD_STKSIZE     2048
-#if defined(PLATFORM_C62) && defined(CONFIG_TETRA)
+#if defined(PLATFORM_C62) && (defined(CONFIG_TETRA) || defined(CONFIG_DMR_RX))
 /*
- * The TETRA mode decodes in the rtx thread: libtetra needs up to about 1.5
- * KB (Viterbi, MAC, SDS), plus the event callback and newlib's snprintf.
+ * The TETRA and DMR receive modes decode in the rtx thread: libtetra needs
+ * up to about 1.5 KB (Viterbi, MAC, SDS), the DMR decoder about 1 KB of
+ * burst buffers, plus the event callbacks and newlib's snprintf.
  */
 #define RTX_THREAD_STKSIZE    4096
 #elif defined(PLATFORM_C62)
