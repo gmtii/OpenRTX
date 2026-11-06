@@ -71,6 +71,15 @@ option(C62_TETRA_IF_DC_FILTER "BK4819 RX IF DC filter in TETRA mode" ON)
 #   fetches to modules/lib/openacelp.
 option(C62_TETRA_SPEECH "TETRA speech with OpenACELP" ON)
 set(C62_REG43_SWEEP_MS 1400 CACHE STRING "REG_43 sweep dwell time, ms")
+# C62_DMR: DMR receive mode ("DMR" under key 5, after T), demodulated and
+#   decoded in software: colour code, talkgroup, IDs, talker alias.
+option(C62_DMR "DMR receive mode" ON)
+# C62_DMR_VOICE: DMR speech with mbelib (AMBE+2). mbelib is not fetched by
+#   default: the AMBE+2 algorithm is covered by patents in some countries.
+#   scripts/c62/fetch_mbelib.sh puts it in modules/lib/mbelib. AUTO (default):
+#   on when it is there.
+set(C62_DMR_VOICE AUTO CACHE STRING
+    "DMR speech with mbelib: AUTO (if fetched), ON, OFF")
 
 if(C62_WIDE_RX)
   target_compile_definitions(app PRIVATE C62_WIDE_RX)
@@ -131,8 +140,68 @@ if(C62_TETRA)
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraSpeech.c)
 endif()
 
+if(C62_DMR)
+  set(C62_DMR_SRC ${OPENRTX_ROOT}/openrtx/src/protocols/DMR)
+  target_sources(app PRIVATE
+    ${C62_DMR_SRC}/dmr_demod.c
+    ${C62_DMR_SRC}/dmr_proto.c
+    ${C62_DMR_SRC}/dmr_fec.c
+    ${C62_DMR_SRC}/dmr_data.c
+    ${C62_DMR_SRC}/dmr_lrrp.c
+    ${C62_DMR_SRC}/dmr_trellis.c
+    ${C62_DMR_SRC}/dmr_voice.c
+    ${C62_DMR_SRC}/DmrSpeech.c
+    ${OPENRTX_ROOT}/openrtx/src/rtx/OpMode_DMR_RX.cpp)
+  # The DMR decoder includes its headers by bare name
+  target_include_directories(app PRIVATE
+    ${OPENRTX_ROOT}/openrtx/include/protocols/DMR)
+  # The C62 discriminator has the normal polarity (+3 = positive deviation),
+  # as in M17. The demodulator still flips by itself if it is wrong.
+  target_compile_definitions(app PRIVATE CONFIG_DMR_RX
+                             DMR_DEFAULT_POLARITY=1.0f)
+
+  set(C62_MBELIB ${WEST_TOPDIR}/modules/lib/mbelib)
+  if(C62_DMR_VOICE STREQUAL "AUTO")
+    if(EXISTS ${C62_MBELIB}/mbelib.c)
+      set(c62_dmr_voice ON)
+    else()
+      set(c62_dmr_voice OFF)
+    endif()
+  else()
+    set(c62_dmr_voice ${C62_DMR_VOICE})
+  endif()
+  if(c62_dmr_voice)
+    if(NOT EXISTS ${C62_MBELIB}/mbelib.c)
+      message(FATAL_ERROR "C62_DMR_VOICE needs mbelib in ${C62_MBELIB}: run "
+                          "scripts/c62/fetch_mbelib.sh")
+    endif()
+    set(C62_MBELIB_SRCS
+      ${C62_MBELIB}/mbelib.c
+      ${C62_MBELIB}/ambe3600x2450.c
+      ${C62_MBELIB}/ecc.c)
+    # A library of its own, so its options apply (source properties set here
+    # would not reach the app target, created in another directory). Built
+    # with the Zephyr compiler flags (CPU, FPU, ABI), then: no warnings
+    # (upstream desktop code), -O2, single precision float literals for the
+    # M33's single precision FPU (double literals are emulated in software),
+    # and the fast cosf()/rand() of mbe_fastmath.h. Without these the vocoder
+    # is several times slower than real time.
+    add_library(mbelib STATIC ${C62_MBELIB_SRCS})
+    target_link_libraries(mbelib PRIVATE zephyr_interface)
+    target_include_directories(mbelib PUBLIC ${C62_MBELIB})
+    target_compile_options(mbelib PRIVATE -w -O2 -fsingle-precision-constant
+      -include ${C62_DMR_SRC}/mbe_fastmath.h)
+    target_link_libraries(app PRIVATE mbelib)
+    target_compile_definitions(app PRIVATE DMR_VOICE_ENABLED)
+  endif()
+  set(c62_dmr_status "ON (voice ${c62_dmr_voice})")
+else()
+  set(c62_dmr_status OFF)
+endif()
+
 message(STATUS "C62: wide RX ${C62_WIDE_RX}, TETRA ${C62_TETRA} "
-               "(speech ${C62_TETRA_SPEECH}), REG_43 sweep ${C62_REG43_SWEEP}, "
+               "(speech ${C62_TETRA_SPEECH}), DMR ${c62_dmr_status}, "
+               "REG_43 sweep ${C62_REG43_SWEEP}, "
                "baseband dump ${C62_BASEBAND_DUMP} "
                "(${C62_BASEBAND_DUMP_BAUD} baud, format "
                "${C62_BASEBAND_DUMP_FORMAT}, burst ${C62_BASEBAND_DUMP_BURST})")
