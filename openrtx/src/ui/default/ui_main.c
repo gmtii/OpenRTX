@@ -75,6 +75,12 @@ static void _ui_drawTetraInfo(void)
                            TEXT_ALIGN_LEFT, color_white, SYMBOL_LOCK);
             gfx_print(layout.line4_pos, layout.line4_font, TEXT_ALIGN_CENTER,
                       color_white, "Encrypted");
+        } else if (ts.callUnknown) {
+            // No clear setup for this traffic: likely air encrypted
+            gfx_drawSymbol(layout.line4_pos, layout.line4_symbol_size,
+                           TEXT_ALIGN_LEFT, color_white, SYMBOL_LOCK);
+            gfx_print(layout.line4_pos, layout.line4_font, TEXT_ALIGN_CENTER,
+                      color_white, "Encrypted?");
         } else if (ts.callId != 0) {
             gfx_print(layout.line4_pos, layout.line4_font, TEXT_ALIGN_CENTER,
                       color_white, "%s, call %u",
