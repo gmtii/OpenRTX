@@ -17,6 +17,7 @@
 #include "core/audio_path.h"
 #include "core/audio_stream.h"
 #include "interfaces/delays.h"
+#include "protocols/TETRA/TetraStatus.h"
 
 #define QUEUE_FRAMES 16   /* 480 ms */
 #define PREBUFFER_FRAMES 5 /* 150 ms: frame 18 leaves a 113 ms gap */
@@ -167,7 +168,8 @@ void tetraSpeech_stop(void)
 
 void tetraSpeech_traffic(const struct tetra_traffic *t)
 {
-    if (!running || t->encrypted || t->circuit_type != 0)
+    if (!running || t->encrypted || t->circuit_type != 0
+        || !tetraStatus_knownCall(t))
         return;
 
     struct tetra_speech sp;

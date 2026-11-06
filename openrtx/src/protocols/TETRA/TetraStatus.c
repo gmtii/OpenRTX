@@ -95,6 +95,7 @@ static void onCall(const struct tetra_call *c)
     if (!status.call || c->call_id != status.callId) {
         status.callDst = 0;
         status.callEncrypted = false;
+        status.callUnknown = false;
     }
     status.call = true;
     status.callId = c->call_id;
@@ -104,6 +105,12 @@ static void onCall(const struct tetra_call *c)
     }
     status.callEncrypted |= c->encrypted;
     lastCall = getTick();
+}
+
+bool tetraStatus_knownCall(const struct tetra_traffic *t)
+{
+    /* libtetra leaves both at 0 when no call has this usage marker */
+    return (t->call_id != 0) || (t->talker_ssi != 0);
 }
 
 void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
@@ -146,6 +153,7 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
             if (t->talker_ssi != 0)
                 status.talker = t->talker_ssi;
             status.callEncrypted |= t->encrypted;
+            status.callUnknown = !tetraStatus_knownCall(t);
             if (!status.call)
                 status.callId = t->call_id;
             status.call = true;

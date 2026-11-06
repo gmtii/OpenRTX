@@ -37,7 +37,9 @@ void tetraSpeech_stop(void);
 
 /**
  * Queue the speech frames of a traffic slot. Call from the libtetra event
- * callback; encrypted and data slots are ignored.
+ * callback. Only speech of calls set up in clear and not end-to-end
+ * encrypted is played: encrypted, data and unknown calls' slots are
+ * ignored (see tetraStatus_knownCall()).
  */
 void tetraSpeech_traffic(const struct tetra_traffic *t);
 

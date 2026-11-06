@@ -32,6 +32,7 @@ struct tetraStatus {
     bool call;          /**< A call is set up or traffic is flowing */
     bool callGroup;     /**< Group call */
     bool callEncrypted; /**< Call or its traffic is encrypted */
+    bool callUnknown;   /**< Traffic of no call set up in clear: not played */
     bool voice;         /**< Traffic seen in the last second */
     uint16_t callId;    /**< Call identifier */
     uint32_t callDst;   /**< Called (group) SSI, 0 if unknown */
@@ -56,6 +57,19 @@ void tetra_getStatus(struct tetraStatus *out);
 
 /* For the TETRA mode */
 struct tetra_event;
+struct tetra_traffic;
+
+/**
+ * Check whether a traffic slot belongs to a call whose signalling was
+ * received in clear. In promiscuous mode libtetra also passes on the
+ * traffic of calls it knows nothing about, flagged clear: mostly air
+ * encrypted calls, whose signalling it cannot read, and calls set up before
+ * the radio tuned in. Their speech would only be noise.
+ *
+ * @param t: traffic slot.
+ * @return true if the call is known.
+ */
+bool tetraStatus_knownCall(const struct tetra_traffic *t);
 
 /**
  * Clear the status (new frequency, mode change).
