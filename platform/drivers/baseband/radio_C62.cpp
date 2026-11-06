@@ -13,6 +13,7 @@
 #include <core/utils.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 
 #include "drivers/baseband/BK4819.h"
@@ -156,6 +157,159 @@ static bool rxOnlyMode(enum opmode mode)
         || (mode == OPMODE_AM);
 }
 
+/*
+ * AM gain control ("AM fix"). The BK4819 AGC regulates on the FM limiter
+ * input: on a strong AM carrier it leaves the IF overdriven and the AM
+ * detector clips. In AM the AGC is frozen (REG_7E<15>, fixed on REG_13) and
+ * the RX gain set here from the RSSI, which the chip measures after the
+ * front end: attenuate at once when it exceeds the target, give gain back
+ * slowly when the signal drops.
+ *
+ * REG_13 fields, gains from the V3 register list:
+ *   <9:8> LNA short   0..3: -28 -24 -19  0 dB
+ *   <7:5> LNA         0..7: -24 -19 -14 -9 -6 -4 -2 0 dB
+ *   <4:3> mixer       0..3:  -8  -6  -3  0 dB
+ *   <2:0> PGA         0..7: -33 -27 -21 -15 -9 -6 -3 0 dB
+ */
+#define AM_GAIN(s, l, m, p) (((s) << 8) | ((l) << 5) | ((m) << 3) | (p))
+#define AM_TARGET_DBM -89 /* Measured RSSI to stay below */
+#define AM_RELEASE_DB 10  /* Give gain back this far below the target */
+#define AM_HOLD_MS 500    /* After attenuating, before giving gain back */
+
+/* Highest gain first, attenuating at the antenna end first */
+static const uint16_t amGains[] = {
+    AM_GAIN(3, 5, 3, 6), /*  -7 dB, the AGC's maximum (bk4819_init) */
+    AM_GAIN(3, 4, 3, 6), /*  -9 */
+    AM_GAIN(3, 3, 3, 6), /* -12 */
+    AM_GAIN(3, 2, 3, 6), /* -17 */
+    AM_GAIN(2, 7, 3, 6), /* -22 */
+    AM_GAIN(2, 6, 3, 6), /* -24 */
+    AM_GAIN(2, 5, 3, 6), /* -26 */
+    AM_GAIN(2, 4, 3, 6), /* -28 */
+    AM_GAIN(2, 3, 3, 6), /* -31 */
+    AM_GAIN(0, 6, 3, 6), /* -33 */
+    AM_GAIN(0, 5, 3, 6), /* -35 */
+    AM_GAIN(0, 4, 3, 6), /* -37 */
+    AM_GAIN(0, 3, 3, 6), /* -40 */
+    AM_GAIN(0, 2, 3, 6), /* -45 */
+    AM_GAIN(0, 1, 3, 6), /* -50 */
+    AM_GAIN(0, 0, 3, 6), /* -55 */
+    AM_GAIN(0, 0, 2, 6), /* -58 */
+    AM_GAIN(0, 0, 1, 6), /* -61 */
+    AM_GAIN(0, 0, 0, 6), /* -63 */
+    AM_GAIN(0, 0, 0, 5), /* -66 */
+    AM_GAIN(0, 0, 0, 4), /* -69 */
+    AM_GAIN(0, 0, 0, 3), /* -75 */
+    AM_GAIN(0, 0, 0, 2), /* -81 */
+    AM_GAIN(0, 0, 0, 1), /* -87 */
+    AM_GAIN(0, 0, 0, 0), /* -93 */
+};
+
+static bool amFixOn;
+static uint16_t amSaved7E;  // AGC settings to restore when leaving AM
+static uint16_t amSaved13;
+static size_t amGain;       // Index in amGains[]
+static bool amSettling;     // Skip one RSSI reading after a gain change
+static int64_t amHoldUntil; // No gain back before this uptime
+static size_t amPrinted;    // Gain index last shown on the console
+static int64_t amNextPrint;
+
+/**
+ * Gain of an amGains[] entry, in dB.
+ */
+static int amGainDb(size_t index)
+{
+    static const int8_t lnaShort[] = { -28, -24, -19, 0 };
+    static const int8_t lna[] = { -24, -19, -14, -9, -6, -4, -2, 0 };
+    static const int8_t mixer[] = { -8, -6, -3, 0 };
+    static const int8_t pga[] = { -33, -27, -21, -15, -9, -6, -3, 0 };
+    const uint16_t reg = amGains[index];
+
+    return lnaShort[(reg >> 8) & 3] + lna[(reg >> 5) & 7]
+         + mixer[(reg >> 3) & 3] + pga[reg & 7];
+}
+
+static void amSetGain(size_t index)
+{
+    amGain = index;
+    amSettling = true;
+    BK4819_writeReg(&c62_bk4819, BK4819_REG_13, amGains[index]);
+}
+
+/**
+ * Freeze the AGC on REG_13 and start from full gain.
+ */
+static void amFixStart()
+{
+    if (!amFixOn) {
+        amSaved7E = BK4819_readReg(&c62_bk4819, BK4819_REG_7E);
+        amSaved13 = BK4819_readReg(&c62_bk4819, BK4819_REG_13);
+        amFixOn = true;
+    }
+
+    // <15> AGC fix mode, <14:12> fixed gain index 3: REG_13
+    BK4819_writeReg(&c62_bk4819, BK4819_REG_7E,
+                    (amSaved7E & ~0xf000) | 0x8000 | (3 << 12));
+    amSetGain(0);
+    amHoldUntil = 0;
+    amPrinted = SIZE_MAX;
+}
+
+/**
+ * Give the chip its AGC back.
+ */
+static void amFixStop()
+{
+    if (!amFixOn)
+        return;
+
+    BK4819_writeReg(&c62_bk4819, BK4819_REG_13, amSaved13);
+    BK4819_writeReg(&c62_bk4819, BK4819_REG_7E, amSaved7E);
+    amFixOn = false;
+}
+
+/**
+ * One step of the AM gain control, every RSSI reading of the rtx thread.
+ *
+ * @param rssi: RSSI measured with the current gain, in dBm.
+ * @return the RSSI the chip would measure at full gain, so that the S-meter
+ * and the squelch do not move with the gain.
+ */
+static rssi_t amFixUpdate(rssi_t rssi)
+{
+    const int64_t now = k_uptime_get();
+
+    if (amSettling) {
+        amSettling = false;
+    } else if (rssi > AM_TARGET_DBM) {
+        // Attack: enough attenuation at once to come back to the target
+        size_t index = amGain;
+        const int excess = rssi - AM_TARGET_DBM;
+        while ((index + 1 < ARRAY_SIZE(amGains))
+               && (amGainDb(amGain) - amGainDb(index) < excess))
+            index++;
+        if (index != amGain)
+            amSetGain(index);
+        amHoldUntil = now + AM_HOLD_MS;
+    } else if ((amGain > 0) && (now >= amHoldUntil)
+               && (rssi < AM_TARGET_DBM - AM_RELEASE_DB)) {
+        // Release: one step, if it stays clear of the target
+        const int step = amGainDb(amGain - 1) - amGainDb(amGain);
+        if (rssi + step < AM_TARGET_DBM - 3)
+            amSetGain(amGain - 1);
+    }
+
+    const int attenuation = amGainDb(0) - amGainDb(amGain);
+    if ((amGain != amPrinted) && (now >= amNextPrint)) {
+        printk("AM gain %d dB, RSSI %d dBm\n", amGainDb(amGain),
+               (int)(rssi + attenuation));
+        amPrinted = amGain;
+        amNextPrint = now + 1000;
+    }
+
+    return rssi + attenuation;
+}
+
 /**
  * Apply the M17 audio settings for receiving or transmitting.
  *
@@ -233,6 +387,7 @@ void radio_setOpmode(const enum opmode mode)
     // The core calls this before disabling the old mode: unkey first
     radio_disableRtx();
     radio_disableAfOutput();
+    amFixStop();
 
     if (flatMode(radioMode)) {
         for (size_t i = 0; i < ARRAY_SIZE(m17Fields); i++) {
@@ -303,6 +458,10 @@ void radio_enableRx()
         if (config->rxToneEn)
             bk4819_enable_rx_ctcss(&c62_bk4819, config->rxTone);
     }
+
+    // AM: a new channel starts again from full gain
+    if (radioMode == OPMODE_AM)
+        amFixStart();
 
     bk4819_rx_on(&c62_bk4819);
     radioStatus = RX;
@@ -406,7 +565,10 @@ rssi_t radio_getRssi()
         }
     }
 #endif
-    return bk4819_get_rssi(&c62_bk4819);
+    rssi_t rssi = bk4819_get_rssi(&c62_bk4819);
+    if (amFixOn && radioStatus == RX)
+        rssi = amFixUpdate(rssi);
+    return rssi;
 }
 
 enum opstatus radio_getStatus()
