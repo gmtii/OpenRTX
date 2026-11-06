@@ -575,6 +575,66 @@ rssi_t radio_getRssi()
     return rssi;
 }
 
+#ifdef CONFIG_SPECTRUM
+/*
+ * Spectrum sweep: the AGC frozen at the gain it starts from, so that the RSSI
+ * of different frequencies compares, and the narrow channel filter for the
+ * resolution. The settling time covers the PLL lock and the RSSI averaging.
+ */
+#ifndef C62_SPECTRUM_SETTLE_US
+#define C62_SPECTRUM_SETTLE_US 2000
+#endif
+
+static uint16_t specSaved7E;
+static uint16_t specSaved13;
+static uint16_t specSaved43;
+static int specVhf; // LNA in use: 1 VHF, 0 UHF, -1 none yet
+
+void radio_spectrumBegin()
+{
+    radio_disableRtx();
+    radio_disableAfOutput();
+    amFixStop();
+
+    specSaved7E = BK4819_readReg(&c62_bk4819, BK4819_REG_7E);
+    specSaved13 = BK4819_readReg(&c62_bk4819, BK4819_REG_13);
+    specSaved43 = BK4819_readReg(&c62_bk4819, BK4819_REG_43);
+
+    // <15> AGC fix mode, <14:12> fixed gain index 3: REG_13, at the AGC's
+    // maximum
+    BK4819_writeReg(&c62_bk4819, BK4819_REG_7E,
+                    (specSaved7E & ~0xf000) | 0x8000 | (3 << 12));
+    BK4819_writeReg(&c62_bk4819, BK4819_REG_13, amGains[0]);
+    bk4819_SetFilterBandwidth(&c62_bk4819, BW_12_5);
+    specVhf = -1;
+}
+
+rssi_t radio_spectrumProbe(const freq_t freq)
+{
+    const int vhf = (freq < 174000000) ? 1 : 0;
+    if (vhf != specVhf) {
+        gpioDev_clear(&c62_bk4819_gpio, GPIO_VHF_RX_LNA);
+        gpioDev_clear(&c62_bk4819_gpio, GPIO_UHF_RX_LNA);
+        gpioDev_set(&c62_bk4819_gpio,
+                    vhf ? GPIO_VHF_RX_LNA : GPIO_UHF_RX_LNA);
+        specVhf = vhf;
+    }
+
+    // Also restarts the receiver, which relocks the PLL
+    bk4819_set_freq(&c62_bk4819, freq);
+    k_usleep(C62_SPECTRUM_SETTLE_US);
+    return bk4819_get_rssi(&c62_bk4819);
+}
+
+void radio_spectrumEnd()
+{
+    BK4819_writeReg(&c62_bk4819, BK4819_REG_43, specSaved43);
+    BK4819_writeReg(&c62_bk4819, BK4819_REG_13, specSaved13);
+    BK4819_writeReg(&c62_bk4819, BK4819_REG_7E, specSaved7E);
+    radio_disableRtx();
+}
+#endif
+
 enum opstatus radio_getStatus()
 {
     return radioStatus;
