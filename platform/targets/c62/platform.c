@@ -15,6 +15,7 @@
 #include <zephyr/drivers/pinctrl.h>
 #include <zephyr/kernel.h>
 #include <interfaces/audio.h>
+#include <interfaces/nvmem.h>
 #include "drivers/SPI/spi_zephyr.h"
 #include "controller.h"
 #include "dsp.h"
@@ -100,6 +101,9 @@ void platform_init_csk6()
     gpio_pin_configure_dt(&led_white, GPIO_OUTPUT_INACTIVE);
     gpio_pin_configure_dt(&led_green, GPIO_OUTPUT_INACTIVE);
     gpio_pin_configure_dt(&led_keyboard, GPIO_OUTPUT_INACTIVE);
+
+    /* Settings and VFO saved in flash, read by state_init() */
+    nvm_init();
 
     /* Init ADC for Battery reading */
     battery_init();
