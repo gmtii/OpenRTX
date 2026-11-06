@@ -56,6 +56,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_DMR` | `ON` | DMR receive mode "DMR" (section 6) |
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
+| `C62_SPECTRUM` | `ON` | Spectrum view, MONI + 0 on the VFO screen (section 9) |
 | `C62_REG43_SWEEP` | `OFF` | Cycle `REG_43` through 7 test values in M17 RX |
 | `C62_REG43_SWEEP_MS` | `1400` | Recorded time per sweep value (one burst covers all 7 values) |
 
@@ -267,3 +268,24 @@ The radio receives on 18-660 MHz, the BK4819's continuous tuning range:
 the VHF LNA is used up to 174 MHz, the UHF LNA above. Both are made for
 136-174 and 400-480 MHz, so the sensitivity drops outside those bands.
 It only transmits on 136-174 and 400-480 MHz.
+
+## 9. Spectrum view
+
+On the VFO screen, **MONI + 0** opens a spectrum of the RSSI around the VFO
+frequency: 80 points over 1 MHz (12.5 kHz apart) at first, swept again and
+again, about 0.2 s per sweep. The operating mode is suspended meanwhile: no
+audio, no transmission. The gain is fixed and the channel filter is the
+12.5 kHz one; the vertical scale starts just below the noise floor.
+
+| Key | Action |
+|---|---|
+| **UP** / **DOWN** | Move the marker one point |
+| **0** | Marker to the strongest point |
+| **#** / **\*** | Zoom in / out around the marker (100 kHz to 20 MHz) |
+| **ENTER** | Centre the view on the marker |
+| **PTT** | Tune the VFO to the marker and go back to it |
+| **ESC** | Go back to the VFO, unchanged |
+
+PTT keeps the TX offset of the VFO. It does not transmit: TX stays off
+until the next key on the VFO screen. Points wider apart than the channel
+filter (spans above 1 MHz) can miss narrow signals between them.
