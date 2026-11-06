@@ -103,6 +103,11 @@ extern void _ui_drawSettingsVoicePrompts(ui_state_t* ui_state);
 extern void _ui_drawSettingsReset2Defaults(ui_state_t* ui_state);
 extern void _ui_drawSettingsRadio(ui_state_t* ui_state);
 extern bool _ui_drawMacroMenu(ui_state_t* ui_state);
+#ifdef CONFIG_SPECTRUM
+extern void _ui_drawSpectrum(ui_state_t* ui_state);
+extern bool _ui_spectrumUpdate(ui_state_t* ui_state);
+extern uint8_t _ui_spectrumPeak(ui_state_t* ui_state);
+#endif
 extern void _ui_reset_menu_anouncement_tracking();
 // TODO: get these from ui strings / currentLanguage
 const char *menu_items[] =
@@ -907,6 +912,123 @@ int _ui_handleToneSelectScroll(bool direction_up)
     return 1;
 }
 
+#ifdef CONFIG_SPECTRUM
+/* Spectrum spans, in Hz: SPECTRUM_POINTS points each */
+static const freq_t spectrum_spans[] =
+{
+    100000, 200000, 500000, 1000000, 2000000, 5000000, 10000000, 20000000
+};
+#define SPECTRUM_DEFAULT_SPAN 3 // 1 MHz, 12.5 kHz steps
+
+/**
+ * Sweep the current span around a frequency, kept within the radio's limits.
+ */
+static void _ui_spectrumSweep(freq_t center)
+{
+    const hwInfo_t* hwinfo = platform_getHwInfo();
+    freq_t lo = (hwinfo->vhf_band ? hwinfo->vhf_minFreq
+                                  : hwinfo->uhf_minFreq) * 1000000;
+    freq_t hi = (hwinfo->uhf_band ? hwinfo->uhf_maxFreq
+                                  : hwinfo->vhf_maxFreq) * 1000000;
+    freq_t span = spectrum_spans[ui_state.spec_span];
+    freq_t step = span / SPECTRUM_POINTS;
+
+    // Points on multiples of the step
+    freq_t start = (center > lo + span / 2) ? center - span / 2 : lo;
+    start -= start % step;
+    if(start < lo)
+        start = lo;
+    if(start + span > hi)
+        start = hi - span;
+
+    ui_state.spec_start   = start;
+    ui_state.spec_step    = step;
+    ui_state.spec_sweeps  = 0;
+    ui_state.spec_marker  = (center - start) / step;
+    if(ui_state.spec_marker >= SPECTRUM_POINTS)
+        ui_state.spec_marker = SPECTRUM_POINTS / 2;
+    rtx_spectrumStart(start, step, SPECTRUM_POINTS);
+}
+
+static freq_t _ui_spectrumMarker()
+{
+    return ui_state.spec_start + ui_state.spec_step * ui_state.spec_marker;
+}
+
+/**
+ * Open the spectrum screen around the VFO frequency. TX is disabled, so
+ * that the PTT selecting the marker does not transmit when the radio resumes.
+ */
+static void _ui_spectrumEnter(bool *sync_rtx)
+{
+    state.txDisable = true;
+    *sync_rtx = true;
+    ui_state.spec_span = SPECTRUM_DEFAULT_SPAN;
+    _ui_spectrumSweep(state.channel.rx_frequency);
+    state.ui_screen = SPECTRUM;
+}
+
+/**
+ * Leave the spectrum screen, to the VFO.
+ *
+ * @param tune: true to tune the VFO to the marker, keeping the TX offset.
+ */
+static void _ui_spectrumExit(bool tune, bool *sync_rtx)
+{
+    rtx_spectrumStop();
+    if(tune)
+    {
+        freq_t freq   = _ui_spectrumMarker();
+        int32_t shift = (int32_t)(state.channel.tx_frequency
+                                - state.channel.rx_frequency);
+        state.channel.rx_frequency = freq;
+        state.channel.tx_frequency = freq + shift;
+        *sync_rtx = true;
+    }
+    state.ui_screen = MAIN_VFO;
+}
+
+static void _ui_fsm_spectrum(kbd_msg_t msg, bool *sync_rtx)
+{
+    if(msg.keys & KEY_ESC)
+    {
+        _ui_spectrumExit(false, sync_rtx);
+    }
+    else if(msg.keys & (KEY_UP | KNOB_RIGHT))
+    {
+        if(ui_state.spec_marker < SPECTRUM_POINTS - 1)
+            ui_state.spec_marker++;
+    }
+    else if(msg.keys & (KEY_DOWN | KNOB_LEFT))
+    {
+        if(ui_state.spec_marker > 0)
+            ui_state.spec_marker--;
+    }
+    else if(msg.keys & KEY_0)
+    {
+        ui_state.spec_marker = _ui_spectrumPeak(&ui_state);
+    }
+    else if(msg.keys & KEY_ENTER)
+    {
+        _ui_spectrumSweep(_ui_spectrumMarker());
+    }
+    else if(msg.keys & KEY_HASH)
+    {
+        // Zoom in around the marker
+        if(ui_state.spec_span > 0)
+            ui_state.spec_span--;
+        _ui_spectrumSweep(_ui_spectrumMarker());
+    }
+    else if(msg.keys & KEY_STAR)
+    {
+        // Zoom out
+        if(ui_state.spec_span < ARRAY_SIZE(spectrum_spans) - 1)
+            ui_state.spec_span++;
+        _ui_spectrumSweep(_ui_spectrumMarker());
+    }
+}
+#endif
+
 static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
 {
     // If there is no keyboard left and right select the menu entry to edit
@@ -1059,6 +1181,12 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
                 ui_state.input_locked = false;
             break;
     }
+
+#ifdef CONFIG_SPECTRUM
+    // Spectrum around the VFO frequency
+    if((msg.keys & KEY_0) && (state.ui_screen == MAIN_VFO))
+        _ui_spectrumEnter(sync_rtx);
+#endif
 
 #if defined(PLATFORM_TTWRPLUS)
     if(msg.keys & KEY_VOLDOWN)
@@ -1400,6 +1528,17 @@ static enum vpGPSInfoFlags GetGPSDirectionOrSpeedChanged()
 
 void ui_updateFSM(bool *sync_rtx)
 {
+#ifdef CONFIG_SPECTRUM
+    // PTT on the spectrum screen tunes the VFO to the marker. TX stays
+    // disabled until the next key on the VFO screen.
+    if((state.ui_screen == SPECTRUM) && platform_getPttStatus())
+    {
+        _ui_spectrumExit(true, sync_rtx);
+        redraw_needed = true;
+        return;
+    }
+#endif
+
     // Check for events
     if(evQueue_wrPos == evQueue_rdPos) return;
 
@@ -1664,6 +1803,12 @@ void ui_updateFSM(bool *sync_rtx)
                 }
             }
                 break;
+#ifdef CONFIG_SPECTRUM
+            // Spectrum screen
+            case SPECTRUM:
+                _ui_fsm_spectrum(msg, sync_rtx);
+                break;
+#endif
             // VFO frequency input screen
             case MAIN_VFO_INPUT:
                 if(msg.keys & KEY_ENTER)
@@ -2648,6 +2793,12 @@ void ui_updateFSM(bool *sync_rtx)
             return;
         }
 
+#ifdef CONFIG_SPECTRUM
+        // Keep the spectrum on screen
+        if (state.ui_screen == SPECTRUM)
+            return;
+#endif
+
         if (_ui_checkStandby(now - last_event_tick))
         {
             _ui_enterStandby();
@@ -2657,6 +2808,13 @@ void ui_updateFSM(bool *sync_rtx)
 
 bool ui_updateGUI()
 {
+#ifdef CONFIG_SPECTRUM
+    // Draw every new sweep
+    if((last_state.ui_screen == SPECTRUM) && (standby == false)
+       && _ui_spectrumUpdate(&ui_state))
+        redraw_needed = true;
+#endif
+
     if(redraw_needed == false)
         return false;
 
@@ -2771,6 +2929,12 @@ bool ui_updateGUI()
         case LOW_BAT:
             _ui_drawLowBatteryScreen();
             break;
+#ifdef CONFIG_SPECTRUM
+        // Spectrum screen
+        case SPECTRUM:
+            _ui_drawSpectrum(&ui_state);
+            break;
+#endif
     }
 
     // If MACRO menu is active draw it

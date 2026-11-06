@@ -52,8 +52,12 @@ enum uiScreen
     SETTINGS_FM,
     SETTINGS_ACCESSIBILITY,
     SETTINGS_RESET2DEFAULTS,
-    LOW_BAT
+    LOW_BAT,
+    SPECTRUM
 };
+
+/* Points of the spectrum screen */
+#define SPECTRUM_POINTS 80
 
 enum SetRxTx
 {
@@ -234,6 +238,14 @@ typedef struct ui_state_t
 #if defined(CONFIG_UI_NO_KEYBOARD)
     uint8_t macro_menu_selected;
 #endif // UI_NO_KEYBOARD
+#ifdef CONFIG_SPECTRUM
+    // Spectrum screen: range swept, marker point, sweeps drawn
+    freq_t spec_start;
+    freq_t spec_step;
+    uint8_t spec_span;
+    uint8_t spec_marker;
+    uint32_t spec_sweeps;
+#endif
 }
 ui_state_t;
 

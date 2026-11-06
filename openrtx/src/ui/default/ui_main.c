@@ -727,3 +727,133 @@ void _ui_drawMainMEM(ui_state_t* ui_state)
 
     _ui_drawMainBottom();
 }
+
+#ifdef CONFIG_SPECTRUM
+/* Last sweep received from the RTX thread */
+static rssi_t spec_rssi[RTX_SPECTRUM_MAX_POINTS];
+
+/**
+ * Fetch the last spectrum sweep.
+ *
+ * @return true if it is a new one, to be drawn.
+ */
+bool _ui_spectrumUpdate(ui_state_t *ui_state)
+{
+    uint32_t sweeps = rtx_spectrumRead(spec_rssi);
+    bool changed = (sweeps != ui_state->spec_sweeps);
+    ui_state->spec_sweeps = sweeps;
+    return changed;
+}
+
+/**
+ * Strongest point of the last sweep, or the marker if there is none yet.
+ */
+uint8_t _ui_spectrumPeak(ui_state_t *ui_state)
+{
+    if (ui_state->spec_sweeps == 0)
+        return ui_state->spec_marker;
+
+    uint8_t peak = 0;
+    for (uint8_t i = 1; i < SPECTRUM_POINTS; i++) {
+        if (spec_rssi[i] > spec_rssi[peak])
+            peak = i;
+    }
+    return peak;
+}
+
+/**
+ * Print a frequency in MHz, with as many decimals as the step needs.
+ */
+static void _ui_spectrumFreq(char *buf, size_t len, freq_t freq, freq_t step)
+{
+    if (step >= 10000)
+        snprintf(buf, len, "%lu.%03lu", (unsigned long)(freq / 1000000),
+                 (unsigned long)((freq % 1000000) / 1000));
+    else
+        snprintf(buf, len, "%lu.%05lu", (unsigned long)(freq / 1000000),
+                 (unsigned long)((freq % 1000000) / 10));
+}
+
+void _ui_drawSpectrum(ui_state_t *ui_state)
+{
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t fh = gfx_getFontHeight(font);
+    const int16_t pad = layout.horizontal_pad;
+    const freq_t start = ui_state->spec_start;
+    const freq_t step = ui_state->spec_step;
+    const freq_t end = start + step * (SPECTRUM_POINTS - 1);
+    const freq_t marker = start + step * ui_state->spec_marker;
+    char buf[24];
+
+    gfx_clearScreen();
+
+    // Range: first and last frequency, span in the middle
+    int16_t y = fh + 1;
+    _ui_spectrumFreq(buf, sizeof(buf), start, step);
+    gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_LEFT, color_white, buf);
+    _ui_spectrumFreq(buf, sizeof(buf), end, step);
+    gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_RIGHT, color_white, buf);
+    freq_t span = step * SPECTRUM_POINTS;
+    if (span >= 1000000)
+        snprintf(buf, sizeof(buf), "%luM", (unsigned long)(span / 1000000));
+    else
+        snprintf(buf, sizeof(buf), "%luk", (unsigned long)(span / 1000));
+    gfx_print((point_t){ 0, y }, font, TEXT_ALIGN_CENTER, yellow_fab413, buf);
+
+    // Graph area
+    const int16_t top = y + 3;
+    const int16_t bottom = CONFIG_SCREEN_HEIGHT - 2 * (fh + 2) - 2;
+    const int16_t height = bottom - top;
+    const int16_t barW = CONFIG_SCREEN_WIDTH / SPECTRUM_POINTS;
+    const int16_t x0 = (CONFIG_SCREEN_WIDTH - barW * SPECTRUM_POINTS) / 2;
+
+    gfx_drawLine((point_t){ 0, bottom }, (point_t){ CONFIG_SCREEN_WIDTH - 1,
+                 bottom }, color_grey);
+
+    // Marker
+    const int16_t mx = x0 + barW * ui_state->spec_marker;
+    gfx_drawRect((point_t){ mx, top }, barW, height, color_grey, true);
+
+    rssi_t markerRssi = 0;
+    if (ui_state->spec_sweeps > 0) {
+        // Scale from just below the noise floor, at least 40 dB high
+        rssi_t lo = spec_rssi[0];
+        rssi_t hi = spec_rssi[0];
+        for (int i = 1; i < SPECTRUM_POINTS; i++) {
+            if (spec_rssi[i] < lo)
+                lo = spec_rssi[i];
+            if (spec_rssi[i] > hi)
+                hi = spec_rssi[i];
+        }
+        lo -= 3;
+        if (hi < lo + 40)
+            hi = lo + 40;
+
+        for (int i = 0; i < SPECTRUM_POINTS; i++) {
+            int32_t h = ((int32_t)(spec_rssi[i] - lo) * height) / (hi - lo);
+            if (h < 1)
+                h = 1;
+            if (h > height)
+                h = height;
+            color_t c = (i == ui_state->spec_marker) ? yellow_fab413 :
+                                                       color_white;
+            gfx_drawRect((point_t){ x0 + barW * i, bottom - h }, barW, h, c,
+                         true);
+        }
+        markerRssi = spec_rssi[ui_state->spec_marker];
+    }
+
+    // Marker frequency and level
+    y = bottom + fh + 2;
+    _ui_spectrumFreq(buf, sizeof(buf), marker, step);
+    gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_LEFT, yellow_fab413, buf);
+    if (ui_state->spec_sweeps > 0)
+        gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_RIGHT, color_white,
+                  "%d dBm", (int)markerRssi);
+
+    // Keys
+    y += fh + 2;
+    gfx_print((point_t){ 0, y }, font, TEXT_ALIGN_CENTER, color_grey,
+              "PTT:VFO 0:peak *#:zoom");
+}
+#endif
