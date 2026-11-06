@@ -249,6 +249,18 @@ VHF band starts at 108 MHz, so the air band (108-137 MHz) can be tuned;
 the radio still never transmits below 136 MHz.
 
 The C62's VHF front end is meant for 136-174 MHz: below 136 MHz the
-sensitivity is likely lower. The BK4819's AGC is tuned for FM, so very
-strong AM signals may sound distorted.
+sensitivity is likely lower.
+
+The BK4819's AGC is tuned for FM: on a strong AM carrier it leaves the IF
+overdriven and the AM detector clips. In AM the driver freezes the chip's
+AGC and sets the RX gain itself from the RSSI ("AM fix"): it attenuates at
+once when the measured RSSI goes above -89 dBm, and gives the gain back in
+steps after 0.5 s below -99 dBm. The S-meter and the squelch use the RSSI
+corrected for that attenuation. Each gain change is printed on the
+console, at most once a second:
+
+```
+AM gain -37 dB, RSSI -62 dBm
+```
+
 
