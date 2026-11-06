@@ -55,6 +55,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_TETRA_SPEECH` | `ON` | Play clear TETRA speech, with OpenACELP (section 5) |
 | `C62_DMR` | `ON` | DMR receive mode "DMR" (section 6) |
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
+| `C62_AM` | `ON` | AM receive mode "AM" and VHF down to 108 MHz, for the air band (section 7) |
 | `C62_REG43_SWEEP` | `OFF` | Cycle `REG_43` through 7 test values in M17 RX |
 | `C62_REG43_SWEEP_MS` | `1400` | Recorded time per sweep value (one burst covers all 7 values) |
 
@@ -150,7 +151,7 @@ holds 1.4 s each of `7808 7828 7e28 7e2c 7e38 7e20 fe28`. Split them with
 
 ## 5. TETRA mode
 
-Press **5** on the main screen to cycle the modes: FM, M17, T, DMR. In **T**
+Press **5** on the main screen to cycle the modes: FM, M17, T, DMR, AM. In **T**
 mode the radio receives a TETRA TMO downlink (a base station, pi/4-DQPSK)
 and decodes it on the radio with
 [libtetra](https://github.com/sp5wwp/libtetra). It is receive only: PTT does
@@ -238,4 +239,16 @@ and build again: the build log says `DMR ON (voice ON)`. Only one slot is
 played: the first one to start talking, until its call ends. Encrypted
 calls are shown but not played. Line 4 shows the vocoder time per 20 ms
 frame (`Voice 3.2ms`). A firmware built with mbelib contains it.
+
+## 7. AM mode (air band)
+
+**AM** follows **DMR** under key **5**. It receives AM with the BK4819's own
+AM detector, through the same audio path and RF squelch as FM, with the
+12.5 kHz channel filter. It is receive only. With this mode built in, the
+VHF band starts at 108 MHz, so the air band (108-137 MHz) can be tuned;
+the radio still never transmits below 136 MHz.
+
+The C62's VHF front end is meant for 136-174 MHz: below 136 MHz the
+sensitivity is likely lower. The BK4819's AGC is tuned for FM, so very
+strong AM signals may sound distorted.
 
