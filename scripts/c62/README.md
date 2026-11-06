@@ -313,3 +313,24 @@ noise floor and moves only when the floor moves by 6 dB.
 PTT keeps the TX offset of the VFO. It does not transmit: TX stays off
 until the next key on the VFO screen. Points wider apart than the channel
 filter (spans above 1 MHz) can miss narrow signals between them.
+
+## 10. Saved settings
+
+The settings and the VFO (frequency, mode, power, bandwidth, tones) are
+saved when the radio is turned off with the knob, and loaded at power on.
+The C62's MCU stays powered with the knob off: OpenRTX sees the battery
+reading drop, saves and resets. Removing the battery, or letting it run
+flat, does not save.
+
+They live in an emulated EEPROM in the first 16 kB of the OpenRTX storage
+partition of the flash (0x2b0000, see `c62.dts`), away from the factory
+calibration (0x3b0000) and channels (0x3c0000). The console shows each
+load and save:
+
+```
+NVM: VFO 390212500 Hz, mode 4
+NVM: saved VFO 145500000 Hz mode 5 (0), settings (0)
+```
+
+A firmware whose settings or channel structure differs starts from the
+defaults. There are no channel memories yet.
