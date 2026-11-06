@@ -147,11 +147,13 @@ static bool flatMode(enum opmode mode)
 }
 
 /**
- * Receive only modes: TETRA and DMR, demodulated in software.
+ * Receive only modes: TETRA and DMR, demodulated in software, and AM, for
+ * the air band.
  */
 static bool rxOnlyMode(enum opmode mode)
 {
-    return (mode == OPMODE_TETRA) || (mode == OPMODE_DMR);
+    return (mode == OPMODE_TETRA) || (mode == OPMODE_DMR)
+        || (mode == OPMODE_AM);
 }
 
 /**
@@ -263,7 +265,7 @@ void radio_enableAfOutput()
     if (flatMode(radioMode))
         BK4819_SetAF(&c62_bk4819, BK4819_AF_TYPE_BYPASS);
     else
-        bk4819_set_modulation(&c62_bk4819, true);
+        bk4819_set_modulation(&c62_bk4819, radioMode != OPMODE_AM);
 }
 
 void radio_disableAfOutput()
@@ -293,7 +295,11 @@ void radio_enableRx()
     if (flatMode(radioMode)) {
         applyM17Fields(false);
     } else {
-        bk4819_SetFilterBandwidth(&c62_bk4819, config->bandwidth);
+        // AM: the air band carries narrow AM in 25 and 8.33 kHz channels,
+        // the narrow filter keeps the neighbours out
+        bk4819_SetFilterBandwidth(&c62_bk4819, (radioMode == OPMODE_AM) ?
+                                                   BW_12_5 :
+                                                   config->bandwidth);
         if (config->rxToneEn)
             bk4819_enable_rx_ctcss(&c62_bk4819, config->rxTone);
     }
