@@ -273,9 +273,12 @@ It only transmits on 136-174 and 400-480 MHz.
 
 On the VFO screen, **MONI + 0** opens a spectrum of the RSSI around the VFO
 frequency: 80 points over 1 MHz (12.5 kHz apart) at first, swept again and
-again, about 0.2 s per sweep. The operating mode is suspended meanwhile: no
+again, about 0.3 s per sweep. The operating mode is suspended meanwhile: no
 audio, no transmission. The gain is fixed and the channel filter is the
-12.5 kHz one; the vertical scale starts just below the noise floor.
+12.5 kHz one. Each point waits 3.2 ms for the RSSI to settle, as on the
+UV-K5. A bar rises at once with the signal and falls back slowly, so that
+the noise does not flicker; the 60 dB high scale starts just below the
+noise floor and moves only when the floor moves by 6 dB.
 
 | Key | Action |
 |---|---|
