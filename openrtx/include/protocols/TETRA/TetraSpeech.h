@@ -7,11 +7,21 @@
 #ifndef OPENRTX_TETRA_SPEECH_H
 #define OPENRTX_TETRA_SPEECH_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 struct tetra_traffic;
+
+/** Call a traffic slot belongs to, as told by the signalling received */
+enum tetraTrafficCall {
+    TETRA_TRAFFIC_UNKNOWN = 0, /**< No call set up in clear on that slot */
+    TETRA_TRAFFIC_CLEAR,       /**< Clear speech call */
+    TETRA_TRAFFIC_ENCRYPTED,   /**< End-to-end or air encrypted call */
+    TETRA_TRAFFIC_DATA,        /**< Circuit mode data call */
+};
 
 /*
  * TETRA speech playback: libtetra's traffic slots -> speech frames (channel
@@ -25,6 +35,25 @@ struct tetra_traffic;
  * these functions do nothing.
  */
 
+/** Speech figures since the TETRA mode was enabled */
+struct tetraSpeechStats {
+    uint32_t slots;     /**< Traffic slots received */
+    uint32_t encrypted; /**< Not played: encrypted call */
+    uint32_t data;      /**< Not played: data call */
+    uint32_t unknown;   /**< Not played: no call set up in clear */
+    uint32_t queued;    /**< Speech frames queued for playback */
+    uint32_t bad;       /**< Queued frames with errors (concealed) */
+    uint32_t played;    /**< Frames played */
+    uint32_t noPath;    /**< Speaker not available */
+};
+
+/**
+ * Copy the speech figures.
+ *
+ * @param out: destination.
+ */
+void tetraSpeech_getStats(struct tetraSpeechStats *out);
+
 /**
  * Start the playback thread.
  */
@@ -37,11 +66,14 @@ void tetraSpeech_stop(void);
 
 /**
  * Queue the speech frames of a traffic slot. Call from the libtetra event
- * callback. Only speech of calls set up in clear and not end-to-end
- * encrypted is played: encrypted, data and unknown calls' slots are
- * ignored (see tetraStatus_knownCall()).
+ * callback. Only clear speech calls are played: the slots of encrypted,
+ * data and unknown calls are ignored.
+ *
+ * @param t: traffic slot.
+ * @param call: call the slot belongs to.
  */
-void tetraSpeech_traffic(const struct tetra_traffic *t);
+void tetraSpeech_traffic(const struct tetra_traffic *t,
+                         enum tetraTrafficCall call);
 
 #ifdef __cplusplus
 }

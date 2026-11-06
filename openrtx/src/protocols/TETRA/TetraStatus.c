@@ -11,6 +11,12 @@
 #include "interfaces/delays.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraStatus.h"
+#ifdef __ZEPHYR__
+#include <zephyr/sys/printk.h>
+#define CALL_PRINT printk
+#else
+#define CALL_PRINT printf
+#endif
 
 /* A call is shown this long after its last activity, if no release is seen */
 #define CALL_TIMEOUT_MS 10000
@@ -20,6 +26,132 @@ static pthread_mutex_t statusMutex = PTHREAD_MUTEX_INITIALIZER;
 static struct tetraStatus status; /* Under statusMutex */
 static long long lastCall;        /* Tick of the last call activity */
 static long long lastVoice;       /* Tick of the last traffic slot */
+
+/*
+ * Calls whose signalling was received, to tell which call a traffic slot
+ * belongs to. libtetra matches traffic to its calls by usage marker only,
+ * and in promiscuous mode passes on unmatched traffic flagged clear: it
+ * would play air-encrypted calls, whose signalling it cannot read, as
+ * noise. As on the ESP32-P4 SDR, a slot belongs to a call by its usage
+ * marker or by the timeslots of the call's channel allocation.
+ */
+#define MAX_CALLS 4
+/* A call is forgotten this long after its last signalling, if no release */
+#define KNOWN_CALL_TIMEOUT_MS 60000
+
+struct knownCall {
+    bool used;
+    uint16_t id;
+    uint8_t usageMarker; /* 0 if unknown */
+    uint8_t timeslots;   /* Bit 0 = TN1, 0 if unknown */
+    bool encrypted;
+    bool data;
+    long long last; /* Tick of the last signalling */
+};
+
+static struct knownCall calls[MAX_CALLS]; /* Under statusMutex */
+
+static void countCalls(void)
+{
+    status.knownCalls = 0;
+    for (int i = 0; i < MAX_CALLS; i++) {
+        if (calls[i].used)
+            status.knownCalls++;
+    }
+}
+
+/**
+ * Update the known calls with call signalling.
+ */
+static void trackCall(const struct tetra_call *c)
+{
+    struct knownCall *k = NULL;
+    for (int i = 0; i < MAX_CALLS; i++) {
+        if (calls[i].used && calls[i].id == c->call_id)
+            k = &calls[i];
+    }
+
+    if (c->what == TETRA_CALL_RELEASE) {
+        if (k != NULL) {
+            CALL_PRINT("TETRA call %u released\n", c->call_id);
+            k->used = false;
+        }
+        countCalls();
+        return;
+    }
+
+    bool isNew = (k == NULL);
+    if (isNew) {
+        /* A free entry, else the call with the oldest signalling */
+        k = &calls[0];
+        for (int i = 0; i < MAX_CALLS; i++) {
+            if (!calls[i].used) {
+                k = &calls[i];
+                break;
+            }
+            if (calls[i].last < k->last)
+                k = &calls[i];
+        }
+        memset(k, 0, sizeof(*k));
+        k->used = true;
+        k->id = c->call_id;
+    }
+
+    uint8_t usageMarker = k->usageMarker;
+    uint8_t timeslots = k->timeslots;
+    if (c->usage_marker != 0)
+        k->usageMarker = c->usage_marker;
+    if (c->timeslots != 0)
+        k->timeslots = c->timeslots;
+    k->encrypted |= c->encrypted;
+    k->data = (c->circuit_type != 0);
+    k->last = getTick();
+
+    status.lastCallId = k->id;
+    status.lastCallMarker = k->usageMarker;
+    status.lastCallSlots = k->timeslots;
+
+    countCalls();
+    if (isNew || usageMarker != k->usageMarker || timeslots != k->timeslots)
+        CALL_PRINT("TETRA call %u to %lu: usage marker %u, timeslots 0x%x%s\n",
+                   k->id, (unsigned long)c->dst_ssi, k->usageMarker,
+                   k->timeslots, k->encrypted ? ", encrypted" : "");
+}
+
+/**
+ * Tell which known call a traffic slot belongs to.
+ */
+static enum tetraTrafficCall matchTraffic(const struct tetra_traffic *t)
+{
+    if (t->encrypted)
+        return TETRA_TRAFFIC_ENCRYPTED;
+
+    long long now = getTick();
+    uint8_t slot = (t->time.tn >= 1) ? (uint8_t)(1u << (t->time.tn - 1)) : 0;
+    for (int i = 0; i < MAX_CALLS; i++) {
+        struct knownCall *k = &calls[i];
+        if (!k->used)
+            continue;
+        if (now - k->last > KNOWN_CALL_TIMEOUT_MS) {
+            k->used = false;
+            continue;
+        }
+        bool marker = (k->usageMarker != 0)
+                   && (k->usageMarker == t->usage_marker);
+        if (marker || (k->timeslots & slot)) {
+            if (k->encrypted)
+                return TETRA_TRAFFIC_ENCRYPTED;
+            return k->data ? TETRA_TRAFFIC_DATA : TETRA_TRAFFIC_CLEAR;
+        }
+    }
+
+    /* libtetra matched it to a call of its own */
+    if (t->call_id != 0 || t->talker_ssi != 0)
+        return (t->circuit_type != 0) ? TETRA_TRAFFIC_DATA :
+                                        TETRA_TRAFFIC_CLEAR;
+
+    return TETRA_TRAFFIC_UNKNOWN;
+}
 
 void tetra_getStatus(struct tetraStatus *out)
 {
@@ -75,6 +207,8 @@ static void onSds(const struct tetra_sds *s)
 
 static void onCall(const struct tetra_call *c)
 {
+    trackCall(c);
+
     switch (c->what) {
         case TETRA_CALL_RELEASE:
             status.call = false;
@@ -107,19 +241,18 @@ static void onCall(const struct tetra_call *c)
     lastCall = getTick();
 }
 
-bool tetraStatus_knownCall(const struct tetra_traffic *t)
-{
-    /* libtetra leaves both at 0 when no call has this usage marker */
-    return (t->call_id != 0) || (t->talker_ssi != 0);
-}
-
 void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
 {
     (void)user;
 
     /* Speech first, outside the status lock */
-    if (ev->type == TETRA_EV_TRAFFIC)
-        tetraSpeech_traffic(&ev->u.traffic);
+    enum tetraTrafficCall call = TETRA_TRAFFIC_UNKNOWN;
+    if (ev->type == TETRA_EV_TRAFFIC) {
+        pthread_mutex_lock(&statusMutex);
+        call = matchTraffic(&ev->u.traffic);
+        pthread_mutex_unlock(&statusMutex);
+        tetraSpeech_traffic(&ev->u.traffic, call);
+    }
 
     pthread_mutex_lock(&statusMutex);
     switch (ev->type) {
@@ -152,8 +285,10 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
             const struct tetra_traffic *t = &ev->u.traffic;
             if (t->talker_ssi != 0)
                 status.talker = t->talker_ssi;
-            status.callEncrypted |= t->encrypted;
-            status.callUnknown = !tetraStatus_knownCall(t);
+            status.callEncrypted |= (call == TETRA_TRAFFIC_ENCRYPTED);
+            status.callUnknown = (call == TETRA_TRAFFIC_UNKNOWN);
+            status.lastTrafficMarker = t->usage_marker;
+            status.lastTrafficTn = t->time.tn;
             if (!status.call)
                 status.callId = t->call_id;
             status.call = true;
@@ -175,6 +310,7 @@ void tetraStatus_reset(void)
 {
     pthread_mutex_lock(&statusMutex);
     memset(&status, 0, sizeof(status));
+    memset(calls, 0, sizeof(calls));
     pthread_mutex_unlock(&statusMutex);
 }
 

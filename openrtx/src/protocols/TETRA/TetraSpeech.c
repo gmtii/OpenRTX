@@ -17,12 +17,19 @@
 #include "core/audio_path.h"
 #include "core/audio_stream.h"
 #include "interfaces/delays.h"
-#include "protocols/TETRA/TetraStatus.h"
+#ifdef __ZEPHYR__
+#include <zephyr/sys/printk.h>
+#define STATS_PRINT printk
+#else
+#include <stdio.h>
+#define STATS_PRINT printf
+#endif
 
-#define QUEUE_FRAMES 16   /* 480 ms */
+#define QUEUE_FRAMES 16    /* 480 ms */
 #define PREBUFFER_FRAMES 5 /* 150 ms: frame 18 leaves a 113 ms gap */
-#define SILENCE_FRAMES 34 /* About one second of 30 ms frames */
+#define SILENCE_FRAMES 34  /* About one second of 30 ms frames */
 #define THREAD_STACK 4096
+#define STATS_MS 10000
 
 struct frame {
     uint8_t bits[OA_FRAME_BITS];
@@ -43,6 +50,47 @@ static pthread_t thread;
 static pthread_attr_t attr;
 static volatile bool running;
 static volatile bool stopRequest;
+
+/*
+ * Console figures, every STATS_MS while traffic arrives: traffic slots, the
+ * ones not played and why, speech frames queued (bad ones among them),
+ * frames played and speaker openings that failed.
+ */
+static volatile uint32_t statSlots, statEnc, statData, statUnknown;
+static volatile uint32_t statQueued, statBad, statPlayed, statNoPath;
+static uint32_t statLastSlots;
+static long long statNext;
+
+void tetraSpeech_getStats(struct tetraSpeechStats *out)
+{
+    out->slots = statSlots;
+    out->encrypted = statEnc;
+    out->data = statData;
+    out->unknown = statUnknown;
+    out->queued = statQueued;
+    out->bad = statBad;
+    out->played = statPlayed;
+    out->noPath = statNoPath;
+}
+
+static void printStats(void)
+{
+    long long now = getTick();
+    if (now < statNext)
+        return;
+    statNext = now + STATS_MS;
+    if (statSlots == statLastSlots)
+        return;
+    statLastSlots = statSlots;
+
+    STATS_PRINT("TETRA speech: %lu slots (encrypted %lu, data %lu, "
+                "unknown call %lu), %lu frames queued (bad %lu), "
+                "%lu played, speaker busy %lu\n",
+                (unsigned long)statSlots, (unsigned long)statEnc,
+                (unsigned long)statData, (unsigned long)statUnknown,
+                (unsigned long)statQueued, (unsigned long)statBad,
+                (unsigned long)statPlayed, (unsigned long)statNoPath);
+}
 
 static unsigned queued(void)
 {
@@ -73,6 +121,7 @@ static void playBurst(void)
 {
     pathId path = audioPath_request(SOURCE_MCU, SINK_SPK, PRIO_RX);
     if (audioPath_getStatus(path) != PATH_OPEN) {
+        statNoPath++;
         audioPath_release(path);
         sleepFor(0, 100);
         return;
@@ -100,6 +149,7 @@ static void playBurst(void)
         struct frame f;
         if (pop(&f)) {
             oa_dec_frame(&decoder, f.bits, f.bfi, out);
+            statPlayed++;
             silence = 0;
         } else {
             memset(out, 0, OA_FRAME_SAMPLES * sizeof(*out));
@@ -120,6 +170,7 @@ static void *playback(void *arg)
             playBurst();
         else
             sleepFor(0, 10);
+        printStats();
     }
     return NULL;
 }
@@ -133,17 +184,24 @@ void tetraSpeech_start(void)
     queueHead = queueCount = 0;
     pthread_mutex_unlock(&queueMutex);
     stopRequest = false;
+    statSlots = statEnc = statData = statUnknown = 0;
+    statQueued = statBad = statPlayed = statNoPath = 0;
+    statLastSlots = 0;
 
     pthread_attr_init(&attr);
 #ifdef __ZEPHYR__
     void *stack = malloc(THREAD_STACK);
-    if (stack == NULL)
+    if (stack == NULL) {
+        STATS_PRINT("TETRA speech: no memory for the playback thread\n");
         return;
+    }
     pthread_attr_setstack(&attr, stack, THREAD_STACK);
 #else
     pthread_attr_setstacksize(&attr, THREAD_STACK);
 #endif
     running = pthread_create(&thread, &attr, playback, NULL) == 0;
+    if (!running)
+        STATS_PRINT("TETRA speech: playback thread not started\n");
 #ifdef __ZEPHYR__
     if (!running)
         free(stack);
@@ -166,11 +224,26 @@ void tetraSpeech_stop(void)
 #endif
 }
 
-void tetraSpeech_traffic(const struct tetra_traffic *t)
+void tetraSpeech_traffic(const struct tetra_traffic *t,
+                         enum tetraTrafficCall call)
 {
-    if (!running || t->encrypted || t->circuit_type != 0
-        || !tetraStatus_knownCall(t))
+    if (!running)
         return;
+
+    statSlots++;
+    switch (call) {
+        case TETRA_TRAFFIC_CLEAR:
+            break;
+        case TETRA_TRAFFIC_ENCRYPTED:
+            statEnc++;
+            return;
+        case TETRA_TRAFFIC_DATA:
+            statData++;
+            return;
+        default:
+            statUnknown++;
+            return;
+    }
 
     struct tetra_speech sp;
     tetra_speech_decode(&channelWs, t, &sp);
@@ -186,11 +259,16 @@ void tetraSpeech_traffic(const struct tetra_traffic *t)
         memcpy(f->bits, sp.bits[i], OA_FRAME_BITS);
         f->bfi = sp.bfi[i];
         queueCount++;
+        statQueued++;
+        if (sp.bfi[i])
+            statBad++;
     }
     pthread_mutex_unlock(&queueMutex);
 }
 
-#else  /* CONFIG_TETRA_SPEECH */
+#else /* CONFIG_TETRA_SPEECH */
+
+#include <string.h>
 
 void tetraSpeech_start(void)
 {
@@ -200,9 +278,16 @@ void tetraSpeech_stop(void)
 {
 }
 
-void tetraSpeech_traffic(const struct tetra_traffic *t)
+void tetraSpeech_getStats(struct tetraSpeechStats *out)
+{
+    memset(out, 0, sizeof(*out));
+}
+
+void tetraSpeech_traffic(const struct tetra_traffic *t,
+                         enum tetraTrafficCall call)
 {
     (void)t;
+    (void)call;
 }
 
 #endif /* CONFIG_TETRA_SPEECH */

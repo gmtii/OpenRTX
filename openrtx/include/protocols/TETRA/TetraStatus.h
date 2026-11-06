@@ -19,33 +19,40 @@ extern "C" {
  * thread, read with tetra_getStatus().
  */
 struct tetraStatus {
-    bool sync;          /**< Locked to a TMO downlink */
-    bool cell;          /**< Fields below up to dlFreq are valid */
-    uint16_t mcc;       /**< Mobile country code */
-    uint16_t mnc;       /**< Mobile network code */
-    uint8_t colourCode; /**< Colour code */
-    bool sysinfo;       /**< la and dlFreq are valid */
-    uint16_t la;        /**< Location area */
-    uint32_t dlFreq;    /**< Main carrier downlink frequency, Hz */
-    bool airEncryption; /**< Cell uses air interface encryption */
+    bool sync;           /**< Locked to a TMO downlink */
+    bool cell;           /**< Fields below up to dlFreq are valid */
+    uint16_t mcc;        /**< Mobile country code */
+    uint16_t mnc;        /**< Mobile network code */
+    uint8_t colourCode;  /**< Colour code */
+    bool sysinfo;        /**< la and dlFreq are valid */
+    uint16_t la;         /**< Location area */
+    uint32_t dlFreq;     /**< Main carrier downlink frequency, Hz */
+    bool airEncryption;  /**< Cell uses air interface encryption */
 
-    bool call;          /**< A call is set up or traffic is flowing */
-    bool callGroup;     /**< Group call */
-    bool callEncrypted; /**< Call or its traffic is encrypted */
-    bool callUnknown;   /**< Traffic of no call set up in clear: not played */
-    bool voice;         /**< Traffic seen in the last second */
-    uint16_t callId;    /**< Call identifier */
-    uint32_t callDst;   /**< Called (group) SSI, 0 if unknown */
-    uint32_t talker;    /**< Talking party SSI, 0 if unknown */
+    bool call;           /**< A call is set up or traffic is flowing */
+    bool callGroup;      /**< Group call */
+    bool callEncrypted;  /**< Call or its traffic is encrypted */
+    bool callUnknown;    /**< Traffic of no call set up in clear: not played */
+    bool voice;          /**< Traffic seen in the last second */
+    uint16_t callId;     /**< Call identifier */
+    uint32_t callDst;    /**< Called (group) SSI, 0 if unknown */
+    uint32_t talker;     /**< Talking party SSI, 0 if unknown */
 
-    uint32_t sdsSrc;    /**< Sender of the last SDS, 0 if none */
-    char sds[64];       /**< Last SDS text or status, ASCII */
-    long long sdsTime;  /**< Tick of the last SDS */
+    uint32_t sdsSrc;     /**< Sender of the last SDS, 0 if none */
+    char sds[64];        /**< Last SDS text or status, ASCII */
+    long long sdsTime;   /**< Tick of the last SDS */
 
-    uint16_t phaseErr;  /**< Demodulator RMS phase error, % of pi/4 */
-    uint16_t overruns;  /**< Sample blocks lost: the radio was too slow */
-    uint16_t resyncs;   /**< Burst synchronisation restarts */
-    int16_t carrierHz;  /**< Carrier offset estimate */
+    uint16_t phaseErr;   /**< Demodulator RMS phase error, % of pi/4 */
+    uint16_t overruns;   /**< Sample blocks lost: the radio was too slow */
+    uint16_t resyncs;    /**< Burst synchronisation restarts */
+    int16_t carrierHz;   /**< Carrier offset estimate */
+
+    uint8_t knownCalls;  /**< Calls whose signalling was received */
+    uint16_t lastCallId; /**< Last call signalled, 0 if none */
+    uint8_t lastCallMarker;    /**< Its usage marker, 0 if unknown */
+    uint8_t lastCallSlots;     /**< Its timeslots, bit 0 = TN1 */
+    uint8_t lastTrafficMarker; /**< Usage marker of the last traffic slot */
+    uint8_t lastTrafficTn;     /**< Timeslot of the last traffic slot */
 };
 
 /**
@@ -57,19 +64,6 @@ void tetra_getStatus(struct tetraStatus *out);
 
 /* For the TETRA mode */
 struct tetra_event;
-struct tetra_traffic;
-
-/**
- * Check whether a traffic slot belongs to a call whose signalling was
- * received in clear. In promiscuous mode libtetra also passes on the
- * traffic of calls it knows nothing about, flagged clear: mostly air
- * encrypted calls, whose signalling it cannot read, and calls set up before
- * the radio tuned in. Their speech would only be noise.
- *
- * @param t: traffic slot.
- * @return true if the call is known.
- */
-bool tetraStatus_knownCall(const struct tetra_traffic *t);
 
 /**
  * Clear the status (new frequency, mode change).
