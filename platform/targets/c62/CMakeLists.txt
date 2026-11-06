@@ -121,6 +121,7 @@ if(C62_TETRA)
   target_link_libraries(app PRIVATE tetra)
   target_sources(app PRIVATE
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraDemod.c
+    ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraSds.c
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraStatus.c
     ${OPENRTX_ROOT}/openrtx/src/rtx/OpMode_TETRA.cpp)
   target_compile_definitions(app PRIVATE CONFIG_TETRA)

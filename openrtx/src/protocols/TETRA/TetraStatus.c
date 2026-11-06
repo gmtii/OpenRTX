@@ -9,6 +9,7 @@
 #include <string.h>
 #include <tetra/tetra.h>
 #include "interfaces/delays.h"
+#include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraStatus.h"
 #ifdef __ZEPHYR__
@@ -163,45 +164,19 @@ void tetra_getStatus(struct tetraStatus *out)
     pthread_mutex_unlock(&statusMutex);
 }
 
-/**
- * Copy UTF-8 text as printable ASCII: other characters become '?'.
- */
-static void toAscii(char *dst, size_t len, const char *src)
-{
-    size_t n = 0;
-    while (*src != '\0' && n + 1 < len) {
-        unsigned char c = (unsigned char)*src++;
-        if (c >= 0x80) {
-            /* Skip the continuation bytes of a multi-byte character */
-            while (((unsigned char)*src & 0xc0) == 0x80)
-                src++;
-            c = '?';
-        } else if (c < 0x20) {
-            c = ' ';
-        }
-        dst[n++] = (char)c;
-    }
-    dst[n] = '\0';
-}
-
 static void onSds(const struct tetra_sds *s)
 {
-    char text[160];
+    struct tetraSds m;
+    if (!tetraSds_receive(s, &m))
+        return;
 
-    text[0] = '\0';
-    if (s->type == TETRA_SDS_STATUS) {
-        snprintf(text, sizeof(text), "Status %u", s->status);
-    } else if (s->type == TETRA_SDS_UDD4) {
-        struct tetra_sds_text t;
-        if (tetra_sds_parse_text(s, &t) == 0
-            && tetra_sds_text_utf8(&t, text, sizeof(text)) < 0)
-            text[0] = '\0';
-    }
-    if (text[0] == '\0')
-        return; /* Location reports and binary data are not shown */
+    /* Line 1 shows text and status; locations and data are listed only */
+    if (m.kind != TETRA_SDS_KIND_TEXT && m.kind != TETRA_SDS_KIND_STATUS)
+        return;
 
-    toAscii(status.sds, sizeof(status.sds), text);
-    status.sdsSrc = s->src_ssi;
+    strncpy(status.sds, m.text, sizeof(status.sds) - 1);
+    status.sds[sizeof(status.sds) - 1] = '\0';
+    status.sdsSrc = m.from;
     status.sdsTime = getTick();
 }
 
@@ -312,6 +287,7 @@ void tetraStatus_reset(void)
     memset(&status, 0, sizeof(status));
     memset(calls, 0, sizeof(calls));
     pthread_mutex_unlock(&statusMutex);
+    tetraSds_reset();
 }
 
 void tetraStatus_lostSync(bool overrun)
