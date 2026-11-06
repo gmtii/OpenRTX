@@ -730,7 +730,14 @@ void _ui_drawMainMEM(ui_state_t* ui_state)
 
 #ifdef CONFIG_SPECTRUM
 /* Last sweep received from the RTX thread */
+static rssi_t spec_raw[RTX_SPECTRUM_MAX_POINTS];
+/*
+ * Shown level of each point, in dBm: follows a rise at once, so that
+ * bursts show, and falls back slowly, so that the noise does not flicker.
+ */
 static rssi_t spec_rssi[RTX_SPECTRUM_MAX_POINTS];
+static int32_t spec_level[RTX_SPECTRUM_MAX_POINTS]; /* 1/16 dB */
+static rssi_t spec_floor; /* Bottom of the scale, moved only by 6 dB or more */
 
 /**
  * Fetch the last spectrum sweep.
@@ -739,10 +746,33 @@ static rssi_t spec_rssi[RTX_SPECTRUM_MAX_POINTS];
  */
 bool _ui_spectrumUpdate(ui_state_t *ui_state)
 {
-    uint32_t sweeps = rtx_spectrumRead(spec_rssi);
-    bool changed = (sweeps != ui_state->spec_sweeps);
+    uint32_t sweeps = rtx_spectrumRead(spec_raw);
+    if (sweeps == ui_state->spec_sweeps)
+        return false;
+
+    // First sweep of a range: start from it
+    bool first = (ui_state->spec_sweeps == 0);
     ui_state->spec_sweeps = sweeps;
-    return changed;
+    if (sweeps == 0)
+        return true;
+
+    rssi_t lo = 0;
+    for (int i = 0; i < SPECTRUM_POINTS; i++) {
+        int32_t level = spec_raw[i] * 16;
+        if (first || (level > spec_level[i]))
+            spec_level[i] = level;
+        else
+            spec_level[i] += (level - spec_level[i]) / 4;
+        spec_rssi[i] = spec_level[i] / 16;
+        if ((i == 0) || (spec_rssi[i] < lo))
+            lo = spec_rssi[i];
+    }
+
+    lo -= 3;
+    if (first || (lo < spec_floor) || (lo > spec_floor + 6))
+        spec_floor = lo;
+
+    return true;
 }
 
 /**
@@ -816,18 +846,9 @@ void _ui_drawSpectrum(ui_state_t *ui_state)
 
     rssi_t markerRssi = 0;
     if (ui_state->spec_sweeps > 0) {
-        // Scale from just below the noise floor, at least 40 dB high
-        rssi_t lo = spec_rssi[0];
-        rssi_t hi = spec_rssi[0];
-        for (int i = 1; i < SPECTRUM_POINTS; i++) {
-            if (spec_rssi[i] < lo)
-                lo = spec_rssi[i];
-            if (spec_rssi[i] > hi)
-                hi = spec_rssi[i];
-        }
-        lo -= 3;
-        if (hi < lo + 40)
-            hi = lo + 40;
+        // Scale from just below the noise floor, 60 dB high
+        const rssi_t lo = spec_floor;
+        const rssi_t hi = lo + 60;
 
         for (int i = 0; i < SPECTRUM_POINTS; i++) {
             int32_t h = ((int32_t)(spec_rssi[i] - lo) * height) / (hi - lo);
