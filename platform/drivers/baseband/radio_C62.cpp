@@ -481,7 +481,11 @@ void radio_enableTx()
     //Before enable TX path delay to allow hardware to settle
     delayMs(5);
 
-    if (config->txFrequency < 136000000 || config->txFrequency > 600000000)
+    // Only the bands the PA and its filters are made for: the UI accepts
+    // any frequency the BK4819 receives
+    const freq_t txFreq = config->txFrequency;
+    if (!((txFreq >= 136000000 && txFreq <= 174000000)
+          || (txFreq >= 400000000 && txFreq <= 480000000)))
         return;
 
     bk4819_set_freq(&c62_bk4819, config->txFrequency);
