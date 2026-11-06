@@ -27,7 +27,13 @@ static const hwInfo_t hwInfo = {
     .uhf_maxFreq = 480,
     .uhf_minFreq = 400,
     .vhf_maxFreq = 174,
+#ifdef CONFIG_AM
+    /* Air band reception (108-137 MHz, AM); the radio driver keeps TX at
+     * 136 MHz and above */
+    .vhf_minFreq = 108,
+#else
     .vhf_minFreq = 137,
+#endif
 };
 
 // ADC
