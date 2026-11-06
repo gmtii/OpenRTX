@@ -142,6 +142,149 @@ static void _ui_drawTetraLine1(ui_state_t *ui_state)
 }
 #endif
 
+#ifdef CONFIG_DMR_RX
+#include "protocols/DMR/dmr_demod.h"
+#include "protocols/DMR/dmr_proto.h"
+#include "protocols/DMR/dmr_voice.h"
+
+/* A DMR call stays on the main screen this long after its last burst */
+#define DMR_CALL_SHOW_MS 1500
+
+/**
+ * Pick the DMR slot whose call takes over the main screen: the one being
+ * heard, else the most recent voice call.
+ *
+ * @param slot: the slot information, filled in.
+ * @param ds: the demodulator status, filled in.
+ * @return the slot index, or -1 if no call is shown.
+ */
+static int _ui_dmrCallSlot(dmr_slot_info_t *slot, dmr_demod_status_t *ds)
+{
+    dmr_demod_get_status(ds);
+    if (!ds->locked)
+        return -1;
+
+    int playing = dmr_voice_get_playing();
+    int best = -1;
+    uint32_t bestAge = DMR_CALL_SHOW_MS;
+    for (int i = 0; i < 2; i++) {
+        dmr_slot_info_t si;
+        dmr_proto_get_slot(i, &si);
+        uint32_t age = ds->now_ms - si.last_ms;
+        if (si.activity != DMR_ACT_VOICE || !si.ids_valid
+            || age >= DMR_CALL_SHOW_MS)
+            continue;
+        if (i == playing || age < bestAge) {
+            best = i;
+            bestAge = age;
+            *slot = si;
+            if (i == playing)
+                break;
+        }
+    }
+    return best;
+}
+
+/**
+ * DMR channel or call information, from line 1 to line 4 during a call,
+ * on line 2 otherwise.
+ */
+static void _ui_drawDmrInfo(void)
+{
+    dmr_slot_info_t si;
+    dmr_demod_status_t ds;
+    int slot = _ui_dmrCallSlot(&si, &ds);
+    bool ms = dmr_proto_is_ms_mode();
+
+    if (slot >= 0) {
+        // Talking party: alias, else radio ID
+        gfx_drawSymbol(layout.line1_pos, layout.line1_symbol_size,
+                       TEXT_ALIGN_LEFT, color_white, SYMBOL_CALL_MADE);
+        if (si.alias[0] != '\0')
+            gfx_print(layout.line1_pos, layout.line2_font, TEXT_ALIGN_CENTER,
+                      color_white, "%.12s", si.alias);
+        else
+            gfx_print(layout.line1_pos, layout.line2_font, TEXT_ALIGN_CENTER,
+                      color_white, "%lu", (unsigned long)si.src);
+
+        // Talkgroup or called radio
+        gfx_drawSymbol(layout.line2_pos, layout.line2_symbol_size,
+                       TEXT_ALIGN_LEFT, color_white, SYMBOL_CALL_RECEIVED);
+        gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
+                  color_white, "%s%lu", si.group ? "TG " : "",
+                  (unsigned long)si.dst);
+
+        // Source ID when the alias took line 1, then slot and colour code
+        if (si.alias[0] != '\0')
+            gfx_print(layout.line3_pos, layout.line3_font, TEXT_ALIGN_CENTER,
+                      color_white, "%lu %s%d", (unsigned long)si.src,
+                      ms ? "MS" : "TS", ms ? si.cc : slot + 1);
+        else if (ms)
+            gfx_print(layout.line3_pos, layout.line3_font, TEXT_ALIGN_CENTER,
+                      color_white, "MS CC%d", si.cc);
+        else
+            gfx_print(layout.line3_pos, layout.line3_font, TEXT_ALIGN_CENTER,
+                      color_white, "TS%d CC%d", slot + 1, si.cc);
+
+        // Call state
+        if (si.encrypted) {
+            gfx_drawSymbol(layout.line4_pos, layout.line4_symbol_size,
+                           TEXT_ALIGN_LEFT, color_white, SYMBOL_LOCK);
+            gfx_print(layout.line4_pos, layout.line4_font, TEXT_ALIGN_CENTER,
+                      color_white, "Encrypted");
+        } else if (!dmr_voice_available()) {
+            gfx_print(layout.line4_pos, layout.line4_font, TEXT_ALIGN_CENTER,
+                      color_white, "Voice (no vocoder)");
+        } else if (dmr_voice_get_playing() == slot) {
+            uint32_t frames, avgUs;
+            dmr_voice_get_timing(&frames, &avgUs);
+            gfx_print(layout.line4_pos, layout.line4_font, TEXT_ALIGN_CENTER,
+                      color_white, "Voice %lu.%lums", (unsigned long)(avgUs / 1000),
+                      (unsigned long)((avgUs % 1000) / 100));
+        } else {
+            gfx_print(layout.line4_pos, layout.line4_font, TEXT_ALIGN_CENTER,
+                      color_white, "Voice");
+        }
+        return;
+    }
+
+    if (!ds.locked) {
+        gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
+                  color_white, "DMR searching");
+        return;
+    }
+
+    // Colour code of the slot heard last
+    int cc = -1;
+    for (int i = 0; i < 2 && cc < 0; i++) {
+        dmr_proto_get_slot(i, &si);
+        cc = si.cc;
+    }
+    gfx_drawSymbol(layout.line2_pos, layout.line2_symbol_size,
+                   TEXT_ALIGN_LEFT, color_white, SYMBOL_TRANSMISSION_TOWER);
+    gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
+              color_white, "DMR %s CC%d", ds.bs ? "RPT" : (ms ? "MS" : "DM"),
+              cc);
+}
+
+/**
+ * DMR line 1 in VFO mode, when no call is shown: the demodulator figures.
+ */
+static void _ui_drawDmrLine1(void)
+{
+    dmr_slot_info_t si;
+    dmr_demod_status_t ds;
+    if (_ui_dmrCallSlot(&si, &ds) >= 0)
+        return;
+
+    // Outer symbol level, DC offset (input units), lost sample blocks,
+    // polarity
+    gfx_print(layout.line1_pos, layout.line1_font, TEXT_ALIGN_CENTER,
+              color_white, "L%d %+d o%lu%s", (int)ds.level, (int)ds.dc,
+              (unsigned long)ds.overruns, ds.inverted ? " inv" : "");
+}
+#endif
+
 /**
  * Check whether the current mode shows a call instead of the frequency.
  */
@@ -157,6 +300,13 @@ static bool _ui_callShown(void)
         struct tetraStatus ts;
         tetra_getStatus(&ts);
         return _ui_tetraCallShown(&ts);
+    }
+#endif
+#ifdef CONFIG_DMR_RX
+    if (last_state.channel.mode == OPMODE_DMR) {
+        dmr_slot_info_t si;
+        dmr_demod_status_t ds;
+        return _ui_dmrCallSlot(&si, &ds) >= 0;
     }
 #endif
     return false;
@@ -268,9 +418,13 @@ void _ui_drawModeInfo(ui_state_t* ui_state)
             break;
 
         case OPMODE_DMR:
+            #ifdef CONFIG_DMR_RX
+            _ui_drawDmrInfo();
+            #else
             // Print talkgroup
             gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
                     color_white, "DMR TG%s", "");
+            #endif
             break;
 
         #ifdef CONFIG_M17
@@ -531,6 +685,10 @@ void _ui_drawMainVFO(ui_state_t* ui_state)
     #ifdef CONFIG_TETRA
     if(last_state.channel.mode == OPMODE_TETRA)
         _ui_drawTetraLine1(ui_state);
+    #endif
+    #ifdef CONFIG_DMR_RX
+    if(last_state.channel.mode == OPMODE_DMR)
+        _ui_drawDmrLine1();
     #endif
 
     _ui_drawMainBottom();

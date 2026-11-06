@@ -992,13 +992,21 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
             }
             break;
         case 5:
-            // Cycle through radio modes: FM, M17, TETRA
+            // Cycle through radio modes: FM, M17, TETRA, DMR (receive)
             #ifdef CONFIG_M17
             if(state.channel.mode == OPMODE_FM)
                 state.channel.mode = OPMODE_M17;
             #ifdef CONFIG_TETRA
             else if(state.channel.mode == OPMODE_M17)
                 state.channel.mode = OPMODE_TETRA;
+            #endif
+            #ifdef CONFIG_DMR_RX
+            #ifdef CONFIG_TETRA
+            else if(state.channel.mode == OPMODE_TETRA)
+            #else
+            else if(state.channel.mode == OPMODE_M17)
+            #endif
+                state.channel.mode = OPMODE_DMR;
             #endif
             else //catch any invalid states so they don't get locked out
             #endif
