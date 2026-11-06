@@ -205,6 +205,21 @@ ESP32-P4 SDR: end-to-end encrypted calls (flagged in their setup) show
 calls set up before the radio tuned in show `Encrypted?` and stay silent.
 Their traffic would only decode to noise.
 
+**\*** on the VFO screen cycles the TETRA pages:
+
+- **Main**: the cell, the call, the last SDS text or status on line 1.
+- **Diagnostics**: sync, phase error (10-20 % is a clean signal, 58 % is
+  noise), carrier offset, lost sample blocks (`o`) and resyncs (`r`), the
+  cell, the last call signalled (usage marker, timeslots) and the last
+  traffic slot, the traffic not played and why (unknown call, encrypted,
+  data), and the speech frames queued, bad and played. No PC needed.
+- **SDS**: the last 10 short data messages, newest first; **UP** / **DOWN**
+  browse them, **ESC** goes back. Status, text (simple, immediate, SDS-TL,
+  with user data header), concatenated messages (UDH and SDS-TL, shown
+  once complete, or after two minutes with the parts received), LIP
+  positions, delivery reports. End-to-end encrypted messages are listed
+  without their contents. Decoding ported from the ESP32-P4 SDR.
+
 The baseband dump keeps working in T mode, to capture what the radio
 receives.
 
