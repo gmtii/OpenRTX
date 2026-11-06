@@ -164,7 +164,7 @@ The main screen shows:
 |---|---|---|---|
 | No signal | Demodulator figures | `T searching` | Frequency |
 | Locked to a cell | Last SDS text (scrolling, 30 s) or demodulator figures | `T <MCC>-<MNC> LA <n>` | Frequency |
-| Call | Talking party SSI | Called group (`G`) or individual SSI | Cell, then `Voice` / `Idle` / `Encrypted` |
+| Call | Talking party SSI | Called group (`G`) or individual SSI | Cell, then `Voice` / `Idle` / `Encrypted` / `Encrypted?` |
 
 The green LED is on while the radio is locked to a cell. A call stays on
 screen for 10 s after its last activity unless its release is decoded.
@@ -198,6 +198,12 @@ decodes each traffic slot into two speech frames, and
 audio, with its built-in TETRA codebooks (EN 300 395-2). The speaker is
 released after one second without speech. `-DC62_TETRA_SPEECH=OFF` builds
 without it.
+
+Only calls whose signalling was received in clear are played, as on the
+ESP32-P4 SDR: end-to-end encrypted calls (flagged in their setup) show
+`Encrypted`. Air-encrypted calls, whose signalling cannot be read, and
+calls set up before the radio tuned in show `Encrypted?` and stay silent.
+Their traffic would only decode to noise.
 
 The baseband dump keeps working in T mode, to capture what the radio
 receives.
