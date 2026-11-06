@@ -8,6 +8,7 @@
 #define RTX_H
 
 #include "core/datatypes.h"
+#include <stddef.h>
 #include <stdint.h>
 #include "core/cps.h"
 #include <pthread.h>
@@ -134,6 +135,35 @@ rssi_t rtx_getRssi();
  * @return true if RX squelch is open.
  */
 bool rtx_rxSquelchOpen();
+
+/** Most points in a spectrum sweep */
+#define RTX_SPECTRUM_MAX_POINTS 160
+
+/**
+ * Sweep a frequency range measuring the RSSI, for a spectrum view, until
+ * rtx_spectrumStop(). The current operating mode is suspended meanwhile:
+ * no audio, no transmission. A new range replaces the previous one. Only on
+ * radios building the spectrum view (CONFIG_SPECTRUM).
+ *
+ * @param start: first frequency, in Hz.
+ * @param step: distance between the points, in Hz.
+ * @param points: number of points, at most RTX_SPECTRUM_MAX_POINTS.
+ */
+void rtx_spectrumStart(freq_t start, freq_t step, size_t points);
+
+/**
+ * Stop the spectrum sweep and resume the current operating mode.
+ */
+void rtx_spectrumStop();
+
+/**
+ * Get the last complete sweep of the range given to rtx_spectrumStart().
+ * Thread-safe.
+ *
+ * @param rssi: RSSI of each point in dBm, RTX_SPECTRUM_MAX_POINTS entries.
+ * @return number of sweeps completed so far, 0 if none of this range yet.
+ */
+uint32_t rtx_spectrumRead(rssi_t *rssi);
 
 #ifdef __cplusplus
 }

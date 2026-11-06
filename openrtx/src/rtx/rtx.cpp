@@ -42,6 +42,22 @@ static OpMode_DMR_RX dmrRxMode;         // DMR receive mode handler
 static OpMode_AM  amMode;               // AM receive mode handler
 #endif
 
+#ifdef CONFIG_SPECTRUM
+/*
+ * Spectrum sweep. The parameters and the last complete sweep are shared
+ * with the UI under cfgMutex; the sweep itself runs in the RTX thread.
+ */
+static bool     specWanted;             // Requested by the UI
+static freq_t   specStart;
+static freq_t   specStep;
+static size_t   specPoints;
+static uint32_t specRange;              // Bumped at every new range
+static uint32_t specSweeps;             // Complete sweeps of this range
+static rssi_t   specDone[RTX_SPECTRUM_MAX_POINTS];
+static rssi_t   specWork[RTX_SPECTRUM_MAX_POINTS];
+static bool     specRunning;            // Sweeping, opMode suspended
+#endif
+
 
 void rtx_init(pthread_mutex_t *m)
 {
@@ -112,8 +128,117 @@ rtxStatus_t rtx_getCurrentStatus()
     return rtxStatus;
 }
 
+#ifdef CONFIG_SPECTRUM
+void rtx_spectrumStart(freq_t start, freq_t step, size_t points)
+{
+    if(points > RTX_SPECTRUM_MAX_POINTS)
+        points = RTX_SPECTRUM_MAX_POINTS;
+
+    pthread_mutex_lock(cfgMutex);
+    specStart  = start;
+    specStep   = step;
+    specPoints = points;
+    specRange++;
+    specSweeps = 0;
+    specWanted = true;
+    pthread_mutex_unlock(cfgMutex);
+}
+
+void rtx_spectrumStop()
+{
+    pthread_mutex_lock(cfgMutex);
+    specWanted = false;
+    pthread_mutex_unlock(cfgMutex);
+}
+
+uint32_t rtx_spectrumRead(rssi_t *out)
+{
+    pthread_mutex_lock(cfgMutex);
+    uint32_t sweeps = specSweeps;
+    if(sweeps > 0)
+        memcpy(out, specDone, specPoints * sizeof(rssi_t));
+    pthread_mutex_unlock(cfgMutex);
+
+    return sweeps;
+}
+
+/**
+ * \internal
+ * Run the spectrum sweep, if requested, in place of the operating mode.
+ *
+ * @return true if the sweep owns the radio for this RTX task step.
+ */
+static bool spectrumTask()
+{
+    pthread_mutex_lock(cfgMutex);
+    bool     wanted = specWanted;
+    freq_t   start  = specStart;
+    freq_t   step   = specStep;
+    size_t   points = specPoints;
+    uint32_t range  = specRange;
+    pthread_mutex_unlock(cfgMutex);
+
+    if(wanted && !specRunning)
+    {
+        // Suspend the operating mode: no audio, no transmission
+        currMode->disable();
+        rtxStatus.opStatus = OFF;
+        radio_spectrumBegin();
+        specRunning = true;
+    }
+
+    if(!wanted && specRunning)
+    {
+        // Resume it: the next update turns the receiver on again
+        radio_spectrumEnd();
+        specRunning = false;
+        rtxStatus.opStatus = OFF;
+        reinitFilter = true;
+        currMode->enable();
+        return false;
+    }
+
+    if(!specRunning)
+        return false;
+
+    for(size_t i = 0; i < points; i++)
+    {
+        // Give up on a sweep made obsolete by a new range, or a stop
+        if((i % 8) == 0)
+        {
+            pthread_mutex_lock(cfgMutex);
+            bool same = specWanted && (specRange == range);
+            pthread_mutex_unlock(cfgMutex);
+            if(!same)
+                return true;
+        }
+
+        specWork[i] = radio_spectrumProbe(start + i * step);
+    }
+
+    pthread_mutex_lock(cfgMutex);
+    if(specRange == range)
+    {
+        memcpy(specDone, specWork, points * sizeof(rssi_t));
+        specSweeps++;
+    }
+    pthread_mutex_unlock(cfgMutex);
+
+    return true;
+}
+#endif
+
 void rtx_task()
 {
+    /*
+     * A spectrum sweep suspends the operating mode. New configurations wait
+     * for its end: they are applied when the mode resumes.
+     */
+    #ifdef CONFIG_SPECTRUM
+    if(spectrumTask())
+        return;
+    #endif
+
     // Check if there is a pending new configuration and, in case, read it.
     bool reconfigure = false;
     if(pthread_mutex_trylock(cfgMutex) == 0)
