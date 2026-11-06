@@ -522,6 +522,13 @@ void _ui_drawModeInfo(ui_state_t* ui_state)
             _ui_drawTetraInfo();
             break;
         #endif
+
+        #ifdef CONFIG_AM
+        case OPMODE_AM:
+            gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
+                      color_white, "AM");
+            break;
+        #endif
     }
 }
 
@@ -629,6 +636,9 @@ void _ui_drawMainBottom()
     switch(last_state.channel.mode)
     {
         case OPMODE_FM:
+        #ifdef CONFIG_AM
+        case OPMODE_AM:
+        #endif
             gfx_drawSmeter(meter_pos,
                            meter_width,
                            meter_height,

@@ -1297,6 +1297,11 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
             gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          T");
             break;
 #endif
+#ifdef CONFIG_AM
+        case OPMODE_AM:
+            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          AM");
+            break;
+#endif
     }
 
     gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER,
