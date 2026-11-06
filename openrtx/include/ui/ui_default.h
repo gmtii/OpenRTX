@@ -56,6 +56,15 @@ enum uiScreen
     SPECTRUM
 };
 
+/* TETRA pages of the VFO screen */
+enum tetraPage
+{
+    TETRA_PAGE_MAIN = 0,
+    TETRA_PAGE_DEBUG,
+    TETRA_PAGE_SDS,
+    TETRA_PAGE_NUM
+};
+
 /* Points of the spectrum screen */
 #define SPECTRUM_POINTS 80
 
@@ -238,6 +247,12 @@ typedef struct ui_state_t
 #if defined(CONFIG_UI_NO_KEYBOARD)
     uint8_t macro_menu_selected;
 #endif // UI_NO_KEYBOARD
+#ifdef CONFIG_TETRA
+    // TETRA page on the VFO screen, cycled with *: main, diagnostics, SDS
+    uint8_t tetra_page;
+    // SDS page: message shown, 0 the most recent
+    uint8_t tetra_sds_sel;
+#endif
 #ifdef CONFIG_SPECTRUM
     // Spectrum screen: range swept, marker point, sweeps drawn
     freq_t spec_start;

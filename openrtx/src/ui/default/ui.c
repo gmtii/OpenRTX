@@ -65,6 +65,9 @@
 #include "hwconfig.h"
 #include "core/voicePromptUtils.h"
 #include "core/beeps.h"
+#ifdef CONFIG_TETRA
+#include "protocols/TETRA/TetraSds.h"
+#endif
 
 /* UI main screen functions, their implementation is in "ui_main.c" */
 extern void _ui_drawMainBackground();
@@ -1691,6 +1694,26 @@ void ui_updateFSM(bool *sync_rtx)
                 }
                 else
                 {
+#ifdef CONFIG_TETRA
+                    // SDS page: UP/DOWN browse the messages, ESC leaves it
+                    bool sdsPage = (state.channel.mode == OPMODE_TETRA)
+                                && (ui_state.tetra_page == TETRA_PAGE_SDS);
+                    if(sdsPage && (msg.keys & (KEY_UP | KNOB_RIGHT)))
+                    {
+                        if(ui_state.tetra_sds_sel > 0)
+                            ui_state.tetra_sds_sel--;
+                    }
+                    else if(sdsPage && (msg.keys & (KEY_DOWN | KNOB_LEFT)))
+                    {
+                        if(ui_state.tetra_sds_sel + 1 < TETRA_SDS_MAX)
+                            ui_state.tetra_sds_sel++;
+                    }
+                    else if(sdsPage && (msg.keys & KEY_ESC))
+                    {
+                        ui_state.tetra_page = TETRA_PAGE_MAIN;
+                    }
+                    else
+#endif
                     if(msg.keys & KEY_ENTER)
                     {
                         // Save current main state
@@ -1779,6 +1802,16 @@ void ui_updateFSM(bool *sync_rtx)
                             f1Handled = true;
                         }
                     }
+#ifdef CONFIG_TETRA
+                    else if((msg.keys & KEY_STAR)
+                            && (state.channel.mode == OPMODE_TETRA))
+                    {
+                        // Next TETRA page: main, diagnostics, SDS
+                        ui_state.tetra_page = (ui_state.tetra_page + 1)
+                                            % TETRA_PAGE_NUM;
+                        ui_state.tetra_sds_sel = 0;
+                    }
+#endif
                     else if(input_isNumberPressed(msg))
                     {
                         // Open Frequency input screen

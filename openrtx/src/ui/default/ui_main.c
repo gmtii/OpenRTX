@@ -16,6 +16,8 @@
 #include "ui/utils.h"
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraStatus.h"
+#include "protocols/TETRA/TetraSds.h"
+#include "protocols/TETRA/TetraSpeech.h"
 
 /* An SDS text stays on the main screen this long */
 #define TETRA_SDS_SHOW_MS 30000
@@ -688,10 +690,134 @@ void _ui_drawMainBottom()
     }
 }
 
+#ifdef CONFIG_TETRA
+/**
+ * TETRA diagnostics page, in place of the VFO screen's middle: demodulator,
+ * synchronisation, calls and speech figures.
+ */
+static void _ui_drawTetraDebug(void)
+{
+    struct tetraStatus ts;
+    struct tetraSpeechStats ss;
+    tetra_getStatus(&ts);
+    tetraSpeech_getStats(&ss);
+
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = gfx_getFontHeight(font) + 2;
+    point_t pos = { layout.horizontal_pad, layout.top_h + step };
+
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413,
+              "Sync %s  e%u%%  %+dHz", ts.sync ? "yes" : "no", ts.phaseErr,
+              ts.carrierHz);
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+              "Lost o%u  resync r%u", ts.overruns, ts.resyncs);
+    pos.y += step;
+    if (ts.cell)
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+                  "Cell %u-%u LA %u%s", ts.mcc, ts.mnc, ts.la,
+                  ts.airEncryption ? " enc" : "");
+    else
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "No cell");
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+              "Calls %u  last %u um%u ts%x", ts.knownCalls, ts.lastCallId,
+              ts.lastCallMarker, ts.lastCallSlots);
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+              "Traffic um%u tn%u  slots %lu", ts.lastTrafficMarker,
+              ts.lastTrafficTn, (unsigned long)ss.slots);
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+              "Skip unk %lu enc %lu dat %lu", (unsigned long)ss.unknown,
+              (unsigned long)ss.encrypted, (unsigned long)ss.data);
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+              "Frames %lu bad %lu", (unsigned long)ss.queued,
+              (unsigned long)ss.bad);
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+              "Played %lu  spk busy %lu", (unsigned long)ss.played,
+              (unsigned long)ss.noPath);
+}
+#endif
+
+#ifdef CONFIG_TETRA
+/**
+ * TETRA short data page: one message of the history, UP/DOWN to browse.
+ */
+static void _ui_drawTetraSds(ui_state_t *ui_state)
+{
+    static const char *const kinds[] = { "Status", "Short data", "Text",
+                                         "Location", "Report", "Encrypted",
+                                         "Data" };
+    static struct tetraSds list[TETRA_SDS_MAX];
+    int n = tetraSds_get(list, TETRA_SDS_MAX);
+
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = gfx_getFontHeight(font) + 2;
+    point_t pos = { layout.horizontal_pad, layout.top_h + step };
+
+    if (n == 0) {
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "SDS: none yet");
+        return;
+    }
+    if (ui_state->tetra_sds_sel >= n)
+        ui_state->tetra_sds_sel = n - 1;
+    const struct tetraSds *m = &list[ui_state->tetra_sds_sel];
+
+    // Position in the list and age
+    long age = (long)((getTick() - m->tick) / 1000);
+    char ago[24];
+    if (age < 60)
+        snprintf(ago, sizeof(ago), "%lds", age);
+    else if (age < 3600)
+        snprintf(ago, sizeof(ago), "%ldm", age / 60);
+    else
+        snprintf(ago, sizeof(ago), "%ldh", age / 3600);
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "SDS %d/%d",
+              ui_state->tetra_sds_sel + 1, n);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, yellow_fab413, "%s ago", ago);
+
+    // Sender, destination, kind
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%lu > %lu",
+              (unsigned long)m->from, (unsigned long)m->to);
+    pos.y += step;
+    const char *kind = (m->kind < sizeof(kinds) / sizeof(kinds[0]))
+                     ? kinds[m->kind] : "?";
+    if (m->parts > 0)
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "%s, %u/%u parts",
+                  kind, m->partsGot, m->parts);
+    else
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "%s", kind);
+
+    // Message, wrapped over the rest of the screen
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", m->text);
+}
+#endif
+
 void _ui_drawMainVFO(ui_state_t* ui_state)
 {
     gfx_clearScreen();
     _ui_drawMainTop(ui_state);
+
+    #ifdef CONFIG_TETRA
+    if(last_state.channel.mode == OPMODE_TETRA)
+    {
+        if(ui_state->tetra_page == TETRA_PAGE_DEBUG)
+        {
+            _ui_drawTetraDebug();
+            return;
+        }
+        if(ui_state->tetra_page == TETRA_PAGE_SDS)
+        {
+            _ui_drawTetraSds(ui_state);
+            return;
+        }
+    }
+    #endif
     _ui_drawModeInfo(ui_state);
 
     // Show VFO frequency unless the mode shows a call (M17 LSF, TETRA call)
