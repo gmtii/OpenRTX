@@ -16,6 +16,9 @@
 #ifdef CONFIG_DMR_RX
 #include "rtx/OpMode_DMR_RX.hpp"
 #endif
+#ifdef CONFIG_AM
+#include "rtx/OpMode_AM.hpp"
+#endif
 
 static pthread_mutex_t   *cfgMutex;     // Mutex for incoming config messages
 static const rtxStatus_t *newCnf;       // Pointer for incoming config messages
@@ -34,6 +37,9 @@ static OpMode_TETRA tetraMode;          // TETRA mode handler
 #endif
 #ifdef CONFIG_DMR_RX
 static OpMode_DMR_RX dmrRxMode;         // DMR receive mode handler
+#endif
+#ifdef CONFIG_AM
+static OpMode_AM  amMode;               // AM receive mode handler
 #endif
 
 
@@ -162,6 +168,9 @@ void rtx_task()
                 #endif
                 #ifdef CONFIG_DMR_RX
                 case OPMODE_DMR:  currMode = &dmrRxMode; break;
+                #endif
+                #ifdef CONFIG_AM
+                case OPMODE_AM:   currMode = &amMode; break;
                 #endif
                 default:   currMode = &noMode;
             }

@@ -74,7 +74,8 @@ enum opmode
     OPMODE_FM   = 1,        /**< Analog FM          */
     OPMODE_DMR  = 2,        /**< DMR                */
     OPMODE_M17  = 3,        /**< M17                */
-    OPMODE_TETRA = 4        /**< TETRA (receive)    */
+    OPMODE_TETRA = 4,       /**< TETRA (receive)    */
+    OPMODE_AM   = 5         /**< Analog AM (receive) */
 };
 
 /**
