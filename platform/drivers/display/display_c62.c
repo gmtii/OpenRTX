@@ -123,4 +123,7 @@ void display_setBacklightLevel(uint8_t level)
     if (ret < 0) {
         LOG_ERR("Failed to set display PWM: %d", ret);
     }
+
+    /* The keyboard backlight follows the screen's: off in standby */
+    gpio_pin_set_dt(&led_keyboard, (level > 0) ? 1 : 0);
 }
