@@ -62,6 +62,7 @@ enum tetraPage
     TETRA_PAGE_MAIN = 0,
     TETRA_PAGE_DEBUG,
     TETRA_PAGE_SDS,
+    TETRA_PAGE_SCOPE,
     TETRA_PAGE_NUM
 };
 

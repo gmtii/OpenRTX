@@ -18,6 +18,8 @@
 #include "protocols/TETRA/TetraStatus.h"
 #include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
+#include "protocols/TETRA/TetraDemod.h"
+#include <math.h>
 
 /* An SDS text stays on the main screen this long */
 #define TETRA_SDS_SHOW_MS 30000
@@ -802,6 +804,103 @@ static void _ui_drawTetraSds(ui_state_t *ui_state)
 static void _ui_drawRichMain(ui_state_t *ui_state, bool mem);
 #endif
 
+#ifdef CONFIG_TETRA
+/**
+ * TETRA symbol page: the phase of the last symbols on a circle, where a
+ * clean signal makes four dots at +-45 and +-135 degrees, and the histogram
+ * of the raw discriminator values with the four levels the demodulator's
+ * fit expects: marks off the peaks show a wrong gain or offset.
+ */
+static void _ui_drawTetraScope(void)
+{
+    static float d[TETRA_DEMOD_SCOPE];
+    static float y[TETRA_DEMOD_SCOPE];
+    float levels[4];
+    tetraDemod_scope(tetra_getDemod(), d, y, levels);
+
+    struct tetraStatus ts;
+    tetra_getStatus(&ts);
+
+    static const color_t grey = { 96, 96, 96, 255 };
+    static const color_t dot = { 47, 179, 196, 255 };
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t top = layout.top_h + 3;
+
+    gfx_print((point_t){ layout.horizontal_pad, (int16_t)(top + 8) }, font,
+              TEXT_ALIGN_LEFT, yellow_fab413, "Symbols e%u%% %+dHz %s",
+              ts.phaseErr, ts.carrierHz, ts.sync ? "SYNC" : "");
+
+    // Constellation of the phase changes
+    const int16_t cx = 36, cy = 74, r = 28;
+    gfx_drawCircle((point_t){ cx, cy }, r, grey);
+    gfx_drawLine((point_t){ cx - r - 2, cy }, (point_t){ cx + r + 2, cy },
+                 grey);
+    gfx_drawLine((point_t){ cx, cy - r - 2 }, (point_t){ cx, cy + r + 2 },
+                 grey);
+    for (int i = 0; i < TETRA_DEMOD_SCOPE; i++) {
+        if (isnan(y[i]))
+            continue;
+        int16_t px = cx + (int16_t)lrintf(r * cosf(y[i]));
+        int16_t py = cy - (int16_t)lrintf(r * sinf(y[i]));
+        gfx_drawRect((point_t){ (int16_t)(px - 1), (int16_t)(py - 1) }, 2, 2,
+                     dot, true);
+    }
+    for (int k = 0; k < 4; k++) {
+        float a = (2 * k - 3) * 0.78539816f;
+        int16_t px = cx + (int16_t)lrintf(r * cosf(a));
+        int16_t py = cy - (int16_t)lrintf(r * sinf(a));
+        gfx_drawRect((point_t){ (int16_t)(px - 1), (int16_t)(py - 1) }, 3, 3,
+                     yellow_fab413, false);
+    }
+
+    // Histogram of the raw values, over the data and the expected levels
+    const int16_t hx = 74, hw = 82, hy = 36, hh = 64;
+    const int bins = hw / 2;
+    float lo = levels[0], hi = levels[3];
+    for (int i = 0; i < TETRA_DEMOD_SCOPE; i++) {
+        if (d[i] < lo)
+            lo = d[i];
+        if (d[i] > hi)
+            hi = d[i];
+    }
+    float span = hi - lo;
+    if (span <= 0)
+        span = 1;
+    lo -= span * 0.05f;
+    span *= 1.1f;
+
+    uint16_t count[41] = { 0 };
+    uint16_t peak = 1;
+    for (int i = 0; i < TETRA_DEMOD_SCOPE; i++) {
+        int b = (int)((d[i] - lo) / span * bins);
+        if (b < 0 || b >= bins)
+            continue;
+        if (++count[b] > peak)
+            peak = count[b];
+    }
+    gfx_drawLine((point_t){ hx, (int16_t)(hy + hh) },
+                 (point_t){ (int16_t)(hx + hw), (int16_t)(hy + hh) }, grey);
+    for (int b = 0; b < bins; b++) {
+        int16_t h = (int16_t)((count[b] * (hh - 2)) / peak);
+        if (h > 0)
+            gfx_drawRect((point_t){ (int16_t)(hx + 2 * b),
+                                    (int16_t)(hy + hh - h) },
+                         2, h, color_white, true);
+    }
+    for (int k = 0; k < 4; k++) {
+        int16_t mx = hx + (int16_t)((levels[k] - lo) / span * hw);
+        if (mx < hx || mx > hx + hw)
+            continue;
+        gfx_drawLine((point_t){ mx, (int16_t)(hy + hh + 1) },
+                     (point_t){ mx, (int16_t)(hy + hh + 5) }, yellow_fab413);
+        gfx_drawLine((point_t){ mx, hy }, (point_t){ mx, (int16_t)(hy + 3) },
+                     yellow_fab413);
+    }
+    gfx_print((point_t){ hx, (int16_t)(hy + hh + 15) }, font, TEXT_ALIGN_LEFT,
+              color_grey, "Raw, marks: fit");
+}
+#endif
+
 void _ui_drawMainVFO(ui_state_t* ui_state)
 {
     gfx_clearScreen();
@@ -833,6 +932,11 @@ void _ui_drawMainVFO(ui_state_t* ui_state)
         if(ui_state->tetra_page == TETRA_PAGE_SDS)
         {
             _ui_drawTetraSds(ui_state);
+            return;
+        }
+        if(ui_state->tetra_page == TETRA_PAGE_SCOPE)
+        {
+            _ui_drawTetraScope();
             return;
         }
     }
