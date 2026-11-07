@@ -259,6 +259,11 @@ static size_t symbol(struct tetraDemod *dm, float d, int8_t *soft)
 {
     dm->symbols++;
 
+    /* Scope: the value now, its phase once decided */
+    uint32_t sp = dm->scopePos++ % TETRA_DEMOD_SCOPE;
+    dm->scopeD[sp] = d;
+    dm->scopeY[sp] = NAN;
+
     if (dm->symbols <= WARMUP_SYMBOLS) {
         /* Moments: mean, mean absolute deviation and variance */
         float a = 1.0f / dm->symbols;
@@ -339,6 +344,7 @@ static size_t symbol(struct tetraDemod *dm, float d, int8_t *soft)
     trackPolarity(dm, decide(y));
     if (dm->inverted)
         y = -y;
+    dm->scopeY[sp] = y;
 
     /* Soft bits: b1 = 1 for a negative phase change, b2 for |phi| > pi/2 */
     float k = SOFT_SCALE / (PI_F / 4);
@@ -467,6 +473,17 @@ void tetraDemod_setEqualizer(struct tetraDemod *dm, const float *taps)
 {
     memcpy(dm->eq, taps, sizeof(dm->eq));
     memcpy(dm->eqInit, taps, sizeof(dm->eqInit));
+}
+
+void tetraDemod_scope(const struct tetraDemod *dm, float *d, float *y,
+                      float *levels)
+{
+    memcpy(d, dm->scopeD, sizeof(dm->scopeD));
+    memcpy(y, dm->scopeY, sizeof(dm->scopeY));
+    for (int k = 0; k < 4; k++) {
+        float phi = (2 * k - 3) * (PI_F / 4);
+        levels[k] = (dm->gain > 0) ? dm->offset + phi / dm->gain : 0;
+    }
 }
 
 uint32_t tetraDemod_rotations(const struct tetraDemod *dm)

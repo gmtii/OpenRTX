@@ -26,6 +26,11 @@ static int8_t soft[HALF_SAMPLES * 3 / 4 + 8];
 static struct tetraDemod demod;
 static struct tetra_tmo_rx tmo;
 
+const struct tetraDemod *tetra_getDemod(void)
+{
+    return &demod;
+}
+
 OpMode_TETRA::OpMode_TETRA()
     : startRx(false)
     , dataErrors(0)

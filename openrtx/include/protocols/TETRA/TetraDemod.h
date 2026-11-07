@@ -38,6 +38,8 @@ extern "C" {
 #define TETRA_DEMOD_HIST 64   /* 144 kHz samples kept, power of two */
 #define TETRA_DEMOD_INTERP 12 /* FIR taps per polyphase branch */
 #define TETRA_DEMOD_EQ_TAPS 9
+/* Symbols kept for the symbol page of the UI */
+#define TETRA_DEMOD_SCOPE 256
 
 struct tetraDemod {
     /* Interpolator */
@@ -87,6 +89,11 @@ struct tetraDemod {
     uint32_t badSymbols; /* Consecutive symbols with a high phase error */
     uint32_t reacquired; /* Number of re-acquisitions */
     uint32_t slips;      /* Number of timing jumps followed */
+    /* Last symbols, for the UI: integrated discriminator value, and the
+     * phase change decided from it (NAN while warming up) */
+    float scopeD[TETRA_DEMOD_SCOPE];
+    float scopeY[TETRA_DEMOD_SCOPE];
+    uint32_t scopePos;
 };
 
 /**
@@ -136,6 +143,24 @@ uint32_t tetraDemod_reacquisitions(const struct tetraDemod *dm);
  * turn per symbol (4.5 kHz steps) because the sync sequence came rotated.
  */
 uint32_t tetraDemod_rotations(const struct tetraDemod *dm);
+
+/**
+ * A snapshot of the last symbols, for display: read from another thread,
+ * a symbol or two may be torn, which does not matter on a plot.
+ *
+ * @param dm: demodulator.
+ * @param d: integrated discriminator values, TETRA_DEMOD_SCOPE entries.
+ * @param y: phase changes in radians (NAN if not decided yet), as many.
+ * @param levels: the four values of d the fit expects for -3, -1, 1 and 3
+ * times pi/4.
+ */
+void tetraDemod_scope(const struct tetraDemod *dm, float *d, float *y,
+                      float *levels);
+
+/**
+ * @return the demodulator of the TETRA mode, for display.
+ */
+const struct tetraDemod *tetra_getDemod(void);
 
 /**
  * @return sample clock offset relative to the transmitter, in ppm.
