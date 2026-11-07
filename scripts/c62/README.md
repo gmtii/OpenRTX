@@ -57,7 +57,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
 | `C62_SPECTRUM` | `ON` | Spectrum view, MONI + 0 on the VFO screen (section 9) |
-| `C62_RICH_UI` | `ON` | Main screen with a mode badge, the receiver state (RX, TX, SYNC, LOCK), call cards and a segmented S-meter; `OFF` keeps the default OpenRTX screen |
+| `C62_RICH_UI` | `ON` | Main screen with a mode badge, the receiver state (RX, TX, SYNC, LOCK), call cards and a segmented S-meter, also in the macro menu (squelch level and threshold in FM and AM); macro keys 7 and 8 set the frequency step instead of the brightness. `OFF` keeps the default OpenRTX screen and macro menu |
 | `C62_REG43_SWEEP` | `OFF` | Cycle `REG_43` through 7 test values in M17 RX |
 | `C62_REG43_SWEEP_MS` | `1400` | Recorded time per sweep value (one burst covers all 7 values) |
 
@@ -220,6 +220,12 @@ Their traffic would only decode to noise.
   once complete, or after two minutes with the parts received), LIP
   positions, delivery reports. End-to-end encrypted messages are listed
   without their contents. Decoding ported from the ESP32-P4 SDR.
+- **Symbols**: the phase change of the last 256 symbols on a circle
+  (four clusters at +-45 and +-135 degrees on a clean signal), and the
+  histogram of the raw discriminator values with marks at the four levels
+  the demodulator expects. Marks off the peaks mean a wrong offset or
+  gain: the demodulator then estimates them again at its next
+  re-acquisition, within a few seconds.
 
 The baseband dump keeps working in T mode, to capture what the radio
 receives.
