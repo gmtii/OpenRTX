@@ -798,9 +798,28 @@ static void _ui_drawTetraSds(ui_state_t *ui_state)
 }
 #endif
 
+#ifdef CONFIG_UI_RICH_MAIN
+static void _ui_drawRichMain(ui_state_t *ui_state, bool mem);
+#endif
+
 void _ui_drawMainVFO(ui_state_t* ui_state)
 {
     gfx_clearScreen();
+
+    #ifdef CONFIG_UI_RICH_MAIN
+    #ifdef CONFIG_TETRA
+    bool tetraPage = (last_state.channel.mode == OPMODE_TETRA)
+                  && (ui_state->tetra_page != TETRA_PAGE_MAIN);
+    #else
+    bool tetraPage = false;
+    #endif
+    if(!tetraPage)
+    {
+        _ui_drawRichMain(ui_state, false);
+        return;
+    }
+    #endif
+
     _ui_drawMainTop(ui_state);
 
     #ifdef CONFIG_TETRA
@@ -847,6 +866,11 @@ void _ui_drawMainVFOInput(ui_state_t* ui_state)
 void _ui_drawMainMEM(ui_state_t* ui_state)
 {
     gfx_clearScreen();
+
+    #ifdef CONFIG_UI_RICH_MAIN
+    _ui_drawRichMain(ui_state, true);
+    return;
+    #endif
     _ui_drawMainTop(ui_state);
     _ui_drawModeInfo(ui_state);
 
@@ -1008,5 +1032,675 @@ void _ui_drawSpectrum(ui_state_t *ui_state)
     y += fh + 2;
     gfx_print((point_t){ 0, y }, font, TEXT_ALIGN_CENTER, color_grey,
               "PTT:VFO 0:peak *#:zoom");
+}
+#endif
+
+#ifdef CONFIG_UI_RICH_MAIN
+#include <stdarg.h>
+
+/*
+ * Main screen for colour displays of 160x128 or more: a badge with the mode
+ * and the receiver state on the top bar, the frequency or the call in a
+ * card, the mode's own figures, and a segmented S-meter. Text, rectangles
+ * and lines only.
+ */
+
+#define RICH_PAD    4
+#define RICH_TOP_H  16
+#define RICH_INFO_Y 19
+#define RICH_SEGS   26  // Half S-units from S0 to S9+40
+
+static const color_t rich_grey   = { 160, 160, 160, 255 };
+static const color_t rich_dark   = {  48,  48,  48, 255 };
+static const color_t rich_off    = {  38,  38,  38, 255 };
+static const color_t rich_black  = {   0,   0,   0, 255 };
+static const color_t rich_green  = {  63, 191,  95, 255 };
+static const color_t rich_red    = { 224,  72,  72, 255 };
+static const color_t rich_orange = { 255, 140,  64, 255 };
+static const color_t rich_teal   = {  47, 179, 196, 255 };
+static const color_t rich_violet = { 185, 163, 255, 255 };
+
+/**
+ * Height of the digits and capitals of a font: gfx_getFontHeight() also
+ * counts the descenders.
+ */
+static int16_t _ui_richCap(fontSize_t font)
+{
+    static const uint8_t cap[FONT_SIZE_NUM] = { 5, 8, 11, 12, 14, 17, 21 };
+    return cap[font];
+}
+
+/**
+ * Print text whose top is at y; right alignment takes x as the right margin.
+ */
+static uint16_t _ui_richPrint(int16_t x, int16_t y, fontSize_t font,
+                              textAlign_t align, color_t color,
+                              const char *fmt, ...)
+{
+    char buf[48];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    // The glyphs' last row sits on the baseline
+    point_t pos = { x, (int16_t)(y + _ui_richCap(font) - 1) };
+    gfx_print(pos, font, align, color, "%s", buf);
+    return gfx_getTextWidth(font, buf);
+}
+
+/**
+ * A label in a box, filled or outlined.
+ *
+ * @return the x right after it.
+ */
+static int16_t _ui_richBadge(int16_t x, int16_t y, int16_t h, fontSize_t font,
+                             const char *text, color_t color, bool filled)
+{
+    uint16_t w = gfx_getTextWidth(font, text) + 6;
+    gfx_drawRect((point_t){ x, y }, w, h, color, filled);
+    // Centred, a row higher: the glyphs look low otherwise
+    int16_t ty = y + (h - _ui_richCap(font)) / 2 - 1;
+    _ui_richPrint(x + 3, ty, font, TEXT_ALIGN_LEFT,
+                  filled ? rich_black : color, "%s", text);
+    return x + w;
+}
+
+/**
+ * Mode badge colour and name.
+ */
+static color_t _ui_richModeColor(const char **name)
+{
+    switch(last_state.channel.mode)
+    {
+        #ifdef CONFIG_AM
+        case OPMODE_AM:
+            *name = "AM";
+            return yellow_fab413;
+        #endif
+        #ifdef CONFIG_M17
+        case OPMODE_M17:
+            *name = "M17";
+            return rich_orange;
+        #endif
+        #ifdef CONFIG_TETRA
+        case OPMODE_TETRA:
+            *name = "TETRA";
+            return rich_teal;
+        #endif
+        case OPMODE_DMR:
+            *name = "DMR";
+            return rich_violet;
+        default:
+            *name = "FM";
+            return yellow_fab413;
+    }
+}
+
+/**
+ * Position of a level on the S-meter, in segments: two per S-unit, 6 dB
+ * each up to S9 (-73 dBm), 10 dB each above, up to S9+40.
+ */
+static int _ui_richMeterPos(rssi_t dbm)
+{
+    int u;
+    if(dbm <= -73)
+        u = (dbm + 127) / 3;
+    else
+        u = 18 + (dbm + 73) / 5;
+    if(u < 0)
+        u = 0;
+    if(u > RICH_SEGS)
+        u = RICH_SEGS;
+    return u;
+}
+
+/**
+ * Segmented S-meter from y to the bottom of the screen, with the squelch
+ * threshold if the mode has one.
+ */
+static void _ui_richMeter(int16_t y, color_t accent, bool squelch)
+{
+    const rssi_t rssi = last_state.rssi;
+    const int16_t bottom = CONFIG_SCREEN_HEIGHT - 2;
+    const int16_t x0 = RICH_PAD + 30;
+    const int16_t x1 = CONFIG_SCREEN_WIDTH - RICH_PAD;
+    const int16_t w = x1 - x0;
+
+    gfx_drawHLine(y, 1, rich_dark);
+
+    // Segments in the middle, scale below, squelch mark above
+    const int16_t labelH = _ui_richCap(FONT_SIZE_5PT);
+    const int16_t segH = 9;
+    int16_t segY = y + ((bottom - y) - segH - labelH - 3) / 2 + 4;
+
+    // S-level, large, on the left
+    uint8_t s = rssiToSlevel(rssi);
+    int16_t ty = segY + (segH - _ui_richCap(FONT_SIZE_10PT)) / 2;
+    if(s <= 9)
+        _ui_richPrint(RICH_PAD, ty, FONT_SIZE_10PT, TEXT_ALIGN_LEFT, accent,
+                      "S%u", s);
+    else
+        _ui_richPrint(RICH_PAD, ty, FONT_SIZE_10PT, TEXT_ALIGN_LEFT, accent,
+                      "+%u", (s - 9) * 10);
+
+    int lit = _ui_richMeterPos(rssi);
+    for(int i = 0; i < RICH_SEGS; i++)
+    {
+        int16_t sx = x0 + (i * w) / RICH_SEGS;
+        int16_t sw = (((i + 1) * w) / RICH_SEGS) - (i * w) / RICH_SEGS - 1;
+        color_t c = rich_off;
+        if(i < lit)
+            c = (i < 18) ? rich_green : ((i < 22) ? yellow_fab413 : rich_red);
+        gfx_drawRect((point_t){ sx, segY }, sw, segH, c, true);
+    }
+
+    static const struct { int pos; const char *text; } marks[] = {
+        { 2, "1" }, { 6, "3" }, { 10, "5" }, { 14, "7" }, { 18, "9" },
+        { 22, "+20" }, { 26, "+40" }
+    };
+    for(size_t i = 0; i < sizeof(marks) / sizeof(marks[0]); i++)
+    {
+        uint16_t tw = gfx_getTextWidth(FONT_SIZE_5PT, marks[i].text);
+        int16_t mx = x0 + (marks[i].pos * w) / RICH_SEGS - tw / 2;
+        if(mx + tw > x1)
+            mx = x1 - tw;
+        _ui_richPrint(mx, segY + segH + 2, FONT_SIZE_5PT, TEXT_ALIGN_LEFT,
+                      rich_grey, "%s", marks[i].text);
+    }
+
+    if(squelch)
+    {
+        rssi_t sql = -127 + (last_state.settings.sqlLevel * 66) / 15;
+        int16_t mx = x0 + (_ui_richMeterPos(sql) * w) / RICH_SEGS;
+        for(int16_t r = 0; r < 4; r++)
+            gfx_drawLine((point_t){ mx - 3 + r, segY - 5 + r },
+                         (point_t){ mx + 3 - r, segY - 5 + r }, accent);
+    }
+}
+
+/**
+ * The frequency, large, with its top at y.
+ */
+static void _ui_richFrequency(int16_t y)
+{
+    freq_t freq = platform_getPttStatus() ? last_state.channel.tx_frequency
+                                          : last_state.channel.rx_frequency;
+    char main_str[12];
+    char small_str[4];
+    sniprintf(main_str, sizeof(main_str), "%lu.%03lu",
+              (unsigned long)(freq / 1000000),
+              (unsigned long)((freq % 1000000) / 1000));
+    sniprintf(small_str, sizeof(small_str), "%02lu",
+              (unsigned long)((freq % 1000) / 10));
+
+    uint16_t mw = gfx_getTextWidth(FONT_SIZE_16PT, main_str);
+    uint16_t sw = gfx_getTextWidth(FONT_SIZE_10PT, small_str);
+    uint16_t uw = gfx_getTextWidth(FONT_SIZE_6PT, "MHz") + 3;
+    if(mw + sw + uw > CONFIG_SCREEN_WIDTH - 2 * RICH_PAD)
+        uw = 0; // No room for the unit
+    int16_t x = (CONFIG_SCREEN_WIDTH - (mw + sw + uw)) / 2;
+    int16_t base = y + _ui_richCap(FONT_SIZE_16PT) - 1;
+
+    gfx_print((point_t){ x, base }, FONT_SIZE_16PT, TEXT_ALIGN_LEFT,
+              color_white, "%s", main_str);
+    gfx_print((point_t){ (int16_t)(x + mw), base }, FONT_SIZE_10PT,
+              TEXT_ALIGN_LEFT, color_white, "%s", small_str);
+    if(uw > 0)
+        gfx_print((point_t){ (int16_t)(x + mw + sw + 3), base }, FONT_SIZE_6PT,
+                  TEXT_ALIGN_LEFT, rich_grey, "MHz");
+}
+
+/**
+ * Card for a call: a badge and the called party, the talking party, and a
+ * state line with a coloured dot.
+ */
+static void _ui_richCard(int16_t y, int16_t h, color_t bg, color_t accent,
+                         const char *badge, const char *dst,
+                         const char *talker, const char *talkerId,
+                         color_t stateColor, const char *state,
+                         const char *detail)
+{
+    const int16_t x = RICH_PAD;
+    gfx_drawRect((point_t){ x, y }, CONFIG_SCREEN_WIDTH - 2 * RICH_PAD, h,
+                 bg, true);
+
+    // Called party
+    int16_t row = y + 4;
+    int16_t bh = _ui_richCap(FONT_SIZE_8PT) + 4;
+    int16_t bx = _ui_richBadge(x + 4, row + 3, bh, FONT_SIZE_8PT, badge,
+                               accent, true);
+    _ui_richPrint(bx + 4, row, FONT_SIZE_16PT, TEXT_ALIGN_LEFT, color_white,
+                  "%s", dst);
+
+    // Talking party
+    row += _ui_richCap(FONT_SIZE_16PT) + 5;
+    uint16_t tw = _ui_richPrint(x + 4, row, FONT_SIZE_10PT, TEXT_ALIGN_LEFT,
+                                yellow_fab413, "%s", talker);
+    if(talkerId[0] != '\0')
+        _ui_richPrint(x + 8 + tw, row + 6, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      rich_grey, "%s", talkerId);
+
+    // State
+    row = y + h - _ui_richCap(FONT_SIZE_8PT) - 4;
+    gfx_drawRect((point_t){ x + 4, row + 2 }, 5, 5, stateColor, true);
+    uint16_t sw = _ui_richPrint(x + 12, row, FONT_SIZE_8PT, TEXT_ALIGN_LEFT,
+                                stateColor, "%s", state);
+    _ui_richPrint(x + 15 + sw, row, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
+                  "%s", detail);
+}
+
+/**
+ * Top bar: mode badge, receiver state, power or frequency, battery.
+ */
+static void _ui_richTop(ui_state_t *ui_state, bool callShown)
+{
+    const char *name;
+    color_t accent = _ui_richModeColor(&name);
+    int16_t x = _ui_richBadge(RICH_PAD, 0, 15, FONT_SIZE_8PT, name, accent,
+                              true) + 3;
+
+    // Receiver state: transmitting, signal heard, sync
+    rtxStatus_t rtx = rtx_getCurrentStatus();
+    if(rtx.opStatus == TX)
+        x = _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "TX", rich_red, true);
+    #ifdef CONFIG_TETRA
+    else if(last_state.channel.mode == OPMODE_TETRA)
+    {
+        struct tetraStatus ts;
+        tetra_getStatus(&ts);
+        x = ts.sync ? _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "SYNC",
+                                    rich_green, true)
+                    : _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "NO SYNC",
+                                    rich_red, false);
+    }
+    #endif
+    #ifdef CONFIG_DMR_RX
+    else if(last_state.channel.mode == OPMODE_DMR)
+    {
+        dmr_demod_status_t ds;
+        dmr_demod_get_status(&ds);
+        x = ds.locked ? _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "LOCK",
+                                      rich_green, true)
+                      : _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "SEARCH",
+                                      rich_red, false);
+    }
+    #endif
+    else if(rtx_rxSquelchOpen())
+        x = _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "RX", rich_green, true);
+
+    // Battery, right
+    const int16_t bw = 14, bh = 8;
+    int16_t bx = CONFIG_SCREEN_WIDTH - RICH_PAD - bw - 2;
+    gfx_drawRect((point_t){ bx, 4 }, bw, bh, color_white, false);
+    gfx_drawRect((point_t){ (int16_t)(bx + bw), 6 }, 2, 4, color_white, true);
+    uint16_t fill = ((bw - 4) * last_state.charge) / 100;
+    color_t bc = (last_state.charge > 20) ? rich_green : rich_red;
+    gfx_drawRect((point_t){ (int16_t)(bx + 2), 6 }, fill, bh - 4, bc, true);
+    // The percentage only if it does not run into the receiver state
+    char pct[8];
+    sniprintf(pct, sizeof(pct), "%u%%", last_state.charge);
+    uint16_t pw = gfx_getTextWidth(FONT_SIZE_6PT, pct);
+    int16_t xe = bx - 3;
+    if(bx - 3 - pw >= x + 3)
+    {
+        _ui_richPrint(CONFIG_SCREEN_WIDTH - bx + 3, 4, FONT_SIZE_6PT,
+                      TEXT_ALIGN_RIGHT, color_white, "%s", pct);
+        xe = bx - 3 - pw - 3;
+    }
+    if(ui_state->input_locked && (xe - 10 >= x))
+    {
+        xe -= 10;
+        gfx_drawSymbol((point_t){ xe, 11 }, SYMBOLS_SIZE_6PT, TEXT_ALIGN_LEFT,
+                       color_white, SYMBOL_LOCK);
+    }
+
+    // Middle: the frequency during a call, else the power or RX only
+    char mid[16];
+    freq_t f = last_state.channel.rx_frequency;
+    uint32_t p = last_state.channel.power;
+    if(callShown)
+        sniprintf(mid, sizeof(mid), "%lu.%04lu", (unsigned long)(f / 1000000),
+                  (unsigned long)((f % 1000000) / 100));
+    else if(last_state.channel.rx_only
+        #ifdef CONFIG_TETRA
+            || last_state.channel.mode == OPMODE_TETRA
+        #endif
+        #ifdef CONFIG_AM
+            || last_state.channel.mode == OPMODE_AM
+        #endif
+            || last_state.channel.mode == OPMODE_DMR)
+        sniprintf(mid, sizeof(mid), "RX only");
+    else if(p % 1000)
+        sniprintf(mid, sizeof(mid), "%lu.%lu W", (unsigned long)(p / 1000),
+                  (unsigned long)((p % 1000) / 100));
+    else
+        sniprintf(mid, sizeof(mid), "%lu W", (unsigned long)(p / 1000));
+    uint16_t mw = gfx_getTextWidth(FONT_SIZE_6PT, mid);
+    if(xe - x > mw)
+        _ui_richPrint(x + (xe - x - mw) / 2, 4, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      rich_grey, "%s", mid);
+
+    gfx_drawHLine(RICH_TOP_H, 1, rich_dark);
+}
+
+/**
+ * FM and AM: tone and squelch, the frequency, the TX frequency or channel
+ * name and the level.
+ */
+static void _ui_richAnalog(bool mem)
+{
+    const int16_t y = RICH_INFO_Y;
+    if(mem)
+        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
+                      "M%03u", last_state.channel_index + 1);
+    else
+        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
+                      "VFO");
+
+    char mid[24] = "";
+    if(last_state.channel.mode == OPMODE_FM)
+    {
+        bool tx = last_state.channel.fm.txToneEn;
+        bool rx = last_state.channel.fm.rxToneEn;
+        uint16_t tone = ctcss_tone[last_state.channel.fm.txTone];
+        if(tx || rx)
+            sniprintf(mid, sizeof(mid), "CTCSS %u.%u %s", tone / 10,
+                      tone % 10, _ui_getToneEnabledString(tx, rx, true));
+        else
+            sniprintf(mid, sizeof(mid), "%s",
+                      (last_state.channel.bandwidth == BW_12_5) ? "12.5k"
+                                                                : "25k");
+    }
+    else
+    {
+        sniprintf(mid, sizeof(mid), "12.5k");
+    }
+    _ui_richPrint(0, y, FONT_SIZE_8PT, TEXT_ALIGN_CENTER, color_white, "%s",
+                  mid);
+    _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT, rich_grey,
+                  "SQ %u", last_state.settings.sqlLevel);
+
+    _ui_richFrequency(34);
+
+    const int16_t y2 = 62;
+    freq_t rx = last_state.channel.rx_frequency;
+    freq_t tx = last_state.channel.tx_frequency;
+    if(mem)
+        _ui_richPrint(RICH_PAD, y2, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                      "%.14s", last_state.channel.name);
+    else if(tx != rx)
+        _ui_richPrint(RICH_PAD, y2, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                      "TX %lu.%04lu", (unsigned long)(tx / 1000000),
+                      (unsigned long)((tx % 1000000) / 100));
+    _ui_richPrint(RICH_PAD, y2, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, color_white,
+                  "%d dBm", (int)last_state.rssi);
+}
+
+#ifdef CONFIG_TETRA
+/**
+ * TETRA: the cell, the frequency, the signal quality and the last SDS, or
+ * the call in a card.
+ */
+static void _ui_richTetra(void)
+{
+    struct tetraStatus ts;
+    tetra_getStatus(&ts);
+    const int16_t y = RICH_INFO_Y;
+
+    if(ts.cell)
+    {
+        uint16_t w = _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT,
+                                   color_white, "%u-%u", ts.mcc, ts.mnc);
+        if(ts.sysinfo)
+            _ui_richPrint(RICH_PAD + w + 6, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT,
+                          rich_grey, "LA %u", ts.la);
+        if(ts.airEncryption)
+            _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT,
+                          rich_grey, "AIE");
+    }
+    else
+    {
+        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
+                      "Searching");
+    }
+
+    if(_ui_tetraCallShown(&ts))
+    {
+        char dst[16], talker[16], detail[20];
+        const char *state;
+        color_t sc;
+        sniprintf(dst, sizeof(dst), ts.callDst ? "%lu" : "-",
+                  (unsigned long)ts.callDst);
+        sniprintf(talker, sizeof(talker), ts.talker ? "%lu" : "-",
+                  (unsigned long)ts.talker);
+        if(ts.callEncrypted)
+        {
+            state = "Encrypted";
+            sc = rich_red;
+        }
+        else if(ts.callUnknown)
+        {
+            state = "Encrypted?";
+            sc = rich_orange;
+        }
+        else if(ts.voice)
+        {
+            state = "Voice";
+            sc = rich_green;
+        }
+        else
+        {
+            state = "Idle";
+            sc = rich_grey;
+        }
+        if(ts.callId != 0)
+            sniprintf(detail, sizeof(detail), "call %u", ts.callId);
+        else
+            detail[0] = '\0';
+
+        static const color_t bg = { 15, 42, 46, 255 };
+        _ui_richCard(31, 60, bg, rich_teal, ts.callGroup ? "G" : "I", dst,
+                     talker, "", sc, state, detail);
+        _ui_richMeter(93, rich_teal, false);
+        return;
+    }
+
+    _ui_richFrequency(33);
+
+    // Signal quality from the demodulator's phase error: 58% is noise
+    const int16_t qy = 57;
+    uint16_t lw = _ui_richPrint(RICH_PAD, qy, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                                rich_grey, "Sig");
+    char fig[16];
+    sniprintf(fig, sizeof(fig), "e%u%% %+dHz", ts.phaseErr, ts.carrierHz);
+    uint16_t fw = _ui_richPrint(RICH_PAD, qy, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
+                                color_white, "%s", fig);
+    int16_t bx = RICH_PAD + lw + 4;
+    int16_t bw = CONFIG_SCREEN_WIDTH - RICH_PAD - fw - 4 - bx;
+    int q = ((58 - (int)ts.phaseErr) * 100) / 48;
+    if(q < 0)
+        q = 0;
+    if(q > 100)
+        q = 100;
+    color_t qc = (ts.phaseErr < 25) ? rich_green
+               : ((ts.phaseErr < 40) ? yellow_fab413 : rich_red);
+    gfx_drawRect((point_t){ bx, qy + 1 }, bw, 5, rich_off, true);
+    gfx_drawRect((point_t){ bx, qy + 1 }, (bw * q) / 100, 5, qc, true);
+
+    // Last SDS, else no call
+    const int16_t by = 68;
+    gfx_drawRect((point_t){ RICH_PAD, by }, CONFIG_SCREEN_WIDTH - 2 * RICH_PAD,
+                 17, rich_dark, false);
+    long long age = getTick() - ts.sdsTime;
+    if(ts.sdsSrc != 0 && age < TETRA_SDS_SHOW_MS)
+    {
+        _ui_richPrint(RICH_PAD + 3, by + 4, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      color_white, "%lu: %.16s", (unsigned long)ts.sdsSrc,
+                      ts.sds);
+    }
+    else
+    {
+        _ui_richPrint(RICH_PAD + 3, by + 4, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      rich_grey, "No call");
+    }
+
+    _ui_richMeter(89, rich_teal, false);
+}
+#endif
+
+#ifdef CONFIG_DMR_RX
+/**
+ * DMR: slots and colour code, the frequency and demodulator figures, or
+ * the call in a card.
+ */
+static void _ui_richDmr(void)
+{
+    dmr_slot_info_t si;
+    dmr_demod_status_t ds;
+    int slot = _ui_dmrCallSlot(&si, &ds);
+    bool ms = dmr_proto_is_ms_mode();
+    const int16_t y = RICH_INFO_Y;
+
+    // Slot pills: the one of the call shown filled
+    int active = slot;
+    int16_t x = RICH_PAD;
+    for(int i = 0; i < 2 && !ms; i++)
+    {
+        char t[4];
+        sniprintf(t, sizeof(t), "TS%d", i + 1);
+        x = _ui_richBadge(x, y, 11, FONT_SIZE_6PT, t,
+                          (i == active) ? rich_violet : rich_dark,
+                          i == active) + 3;
+    }
+
+    int cc = -1;
+    for(int i = 0; i < 2 && cc < 0; i++)
+    {
+        dmr_slot_info_t s;
+        dmr_proto_get_slot(i, &s);
+        cc = s.cc;
+    }
+    if(!ds.locked)
+        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT, rich_grey,
+                      "Searching");
+    else if(cc >= 0)
+        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT, rich_grey,
+                      "%s CC%d", ds.bs ? "RPT" : (ms ? "MS" : "DM"), cc);
+
+    if(slot >= 0)
+    {
+        char dst[16], talker[16], id[12], detail[16];
+        const char *state;
+        color_t sc;
+        sniprintf(dst, sizeof(dst), "%lu", (unsigned long)si.dst);
+        if(si.alias[0] != '\0')
+        {
+            sniprintf(talker, sizeof(talker), "%.10s", si.alias);
+            sniprintf(id, sizeof(id), "%lu", (unsigned long)si.src);
+        }
+        else
+        {
+            sniprintf(talker, sizeof(talker), "%lu", (unsigned long)si.src);
+            id[0] = '\0';
+        }
+        if(si.encrypted)
+        {
+            state = "Encrypted";
+            sc = rich_red;
+        }
+        else
+        {
+            state = "Voice";
+            sc = rich_green;
+        }
+        sniprintf(detail, sizeof(detail), "TS%d", slot + 1);
+
+        static const color_t bg = { 29, 24, 48, 255 };
+        _ui_richCard(31, 60, bg, rich_violet, si.group ? "TG" : "ID", dst,
+                     talker, id, sc, state, detail);
+        _ui_richMeter(93, rich_violet, false);
+        return;
+    }
+
+    _ui_richFrequency(33);
+    _ui_richPrint(RICH_PAD, 57, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                  "Level %d  DC %+d  lost %lu%s", (int)ds.level, (int)ds.dc,
+                  (unsigned long)ds.overruns, ds.inverted ? " inv" : "");
+    gfx_drawRect((point_t){ RICH_PAD, 68 }, CONFIG_SCREEN_WIDTH - 2 * RICH_PAD,
+                 17, rich_dark, false);
+    _ui_richPrint(RICH_PAD + 3, 72, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                  "No call");
+    _ui_richMeter(89, rich_violet, false);
+}
+#endif
+
+#ifdef CONFIG_M17
+/**
+ * M17: destination and CAN, the frequency, or the transmission in a card.
+ */
+static void _ui_richM17(ui_state_t *ui_state)
+{
+    rtxStatus_t rtx = rtx_getCurrentStatus();
+    const int16_t y = RICH_INFO_Y;
+    const char *dst = ui_state->edit_mode ? ui_state->new_callsign
+                    : (strnlen(rtx.destination_address, 10) == 0)
+                    ? currentLanguage->broadcast : rtx.destination_address;
+
+    _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, color_white,
+                  "#%s", dst);
+    _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT, rich_grey,
+                  "CAN %u", last_state.settings.m17_can);
+
+    if(rtx.lsfOk)
+    {
+        static const color_t bg = { 48, 30, 18, 255 };
+        const char *extra = (rtx.M17_meta_text[0] != '\0') ? rtx.M17_meta_text
+                          : (rtx.M17_refl[0] != '\0') ? rtx.M17_refl
+                          : rtx.M17_link;
+        char detail[16];
+        sniprintf(detail, sizeof(detail), "%.13s", extra);
+        _ui_richCard(31, 60, bg, rich_orange, "TO", rtx.M17_dst, rtx.M17_src,
+                     "", rich_green, "Voice", detail);
+        _ui_richMeter(93, rich_orange, false);
+        return;
+    }
+
+    _ui_richFrequency(34);
+    _ui_richPrint(RICH_PAD, 62, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, color_white,
+                  "%d dBm", (int)last_state.rssi);
+    _ui_richMeter(74, rich_orange, false);
+}
+#endif
+
+/**
+ * The main screen, VFO or memory.
+ */
+static void _ui_drawRichMain(ui_state_t *ui_state, bool mem)
+{
+    _ui_richTop(ui_state, _ui_callShown());
+
+    switch(last_state.channel.mode)
+    {
+        #ifdef CONFIG_TETRA
+        case OPMODE_TETRA:
+            _ui_richTetra();
+            return;
+        #endif
+        #ifdef CONFIG_DMR_RX
+        case OPMODE_DMR:
+            _ui_richDmr();
+            return;
+        #endif
+        #ifdef CONFIG_M17
+        case OPMODE_M17:
+            _ui_richM17(ui_state);
+            return;
+        #endif
+        default:
+            _ui_richAnalog(mem);
+            _ui_richMeter(74, yellow_fab413, true);
+            return;
+    }
 }
 #endif
