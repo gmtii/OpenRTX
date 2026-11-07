@@ -38,11 +38,15 @@ static void _ui_printSsi(point_t pos, fontSize_t font, const char *prefix,
 }
 
 /**
- * Check whether a TETRA call takes over the main screen.
+ * Check whether a TETRA call takes over the main screen: only one whose
+ * signalling told something about it. Traffic of a call never signalled in
+ * clear (air encrypted, mostly) has nothing to show but its timeslot.
  */
 static bool _ui_tetraCallShown(const struct tetraStatus *ts)
 {
-    return ts->sync && ts->call;
+    bool known = (ts->callDst != 0) || (ts->talker != 0)
+              || (ts->callId != 0) || !ts->callUnknown;
+    return ts->sync && ts->call && known;
 }
 
 /**
@@ -1648,12 +1652,21 @@ static void _ui_richTetra(void)
     gfx_drawRect((point_t){ bx, qy + 1 }, bw, 5, rich_off, true);
     gfx_drawRect((point_t){ bx, qy + 1 }, (bw * q) / 100, 5, qc, true);
 
-    // Last SDS, else no call
+    // Traffic of a call not signalled in clear, else the last SDS, else
+    // no call
     const int16_t by = 68;
     gfx_drawRect((point_t){ RICH_PAD, by }, CONFIG_SCREEN_WIDTH - 2 * RICH_PAD,
                  17, rich_dark, false);
     long long age = getTick() - ts.sdsTime;
-    if(ts.sdsSrc != 0 && age < TETRA_SDS_SHOW_MS)
+    if(ts.sync && ts.voice && ts.callUnknown)
+    {
+        gfx_drawRect((point_t){ RICH_PAD + 3, by + 6 }, 5, 5, rich_orange,
+                     true);
+        _ui_richPrint(RICH_PAD + 11, by + 4, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      rich_orange, "Encrypted traffic, TN%u",
+                      ts.lastTrafficTn);
+    }
+    else if(ts.sdsSrc != 0 && age < TETRA_SDS_SHOW_MS)
     {
         _ui_richPrint(RICH_PAD + 3, by + 4, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
                       color_white, "%lu: %.16s", (unsigned long)ts.sdsSrc,
