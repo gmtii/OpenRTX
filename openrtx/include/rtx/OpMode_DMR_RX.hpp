@@ -10,6 +10,7 @@
 #include "core/audio_path.h"
 #include "core/audio_stream.h"
 #include "OpMode.hpp"
+#include "protocols/DMR/DmrSpeech.h"
 
 /**
  * DMR receive mode, for radios without a DMR baseband chip: demodulates the
@@ -36,9 +37,12 @@ public:
         return OPMODE_DMR;
     }
 
+    /**
+     * Open while a clear call is played: wakes the screen as FM does.
+     */
     virtual bool rxSquelchOpen() override
     {
-        return false;
+        return dmrSpeech_playing();
     }
 
 private:

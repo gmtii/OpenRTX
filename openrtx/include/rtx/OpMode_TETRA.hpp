@@ -10,6 +10,7 @@
 #include "core/audio_path.h"
 #include "core/audio_stream.h"
 #include "OpMode.hpp"
+#include "protocols/TETRA/TetraSpeech.h"
 
 /**
  * TETRA TMO downlink receive mode: demodulates the radio's flat FM
@@ -34,9 +35,12 @@ public:
         return OPMODE_TETRA;
     }
 
+    /**
+     * Open while a clear call is played: wakes the screen as FM does.
+     */
     virtual bool rxSquelchOpen() override
     {
-        return false;
+        return tetraSpeech_playing();
     }
 
 private:
