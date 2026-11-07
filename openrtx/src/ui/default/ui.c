@@ -106,6 +106,9 @@ extern void _ui_drawSettingsVoicePrompts(ui_state_t* ui_state);
 extern void _ui_drawSettingsReset2Defaults(ui_state_t* ui_state);
 extern void _ui_drawSettingsRadio(ui_state_t* ui_state);
 extern bool _ui_drawMacroMenu(ui_state_t* ui_state);
+#ifdef CONFIG_UI_SAVE_CHANNEL
+extern void _ui_drawChannelSave(ui_state_t* ui_state);
+#endif
 #ifdef CONFIG_SPECTRUM
 extern void _ui_drawSpectrum(ui_state_t* ui_state);
 extern bool _ui_spectrumUpdate(ui_state_t* ui_state);
@@ -1032,6 +1035,88 @@ static void _ui_fsm_spectrum(kbd_msg_t msg, bool *sync_rtx)
 }
 #endif
 
+#ifdef CONFIG_UI_SAVE_CHANNEL
+/* Memories the CPS can hold */
+#define SAVE_MAX_CHANNELS 128
+
+/**
+ * Number of memories: they are contiguous from the first.
+ */
+static uint16_t _ui_countChannels()
+{
+    channel_t channel;
+    uint16_t n = 0;
+    while((n < SAVE_MAX_CHANNELS) && (cps_readChannel(&channel, n) != -1))
+        n++;
+    return n;
+}
+
+/**
+ * Save VFO screen: UP/DOWN pick a memory or a new one, ENTER saves the VFO
+ * there, # twice deletes the memory, ESC or P2 go back.
+ */
+static void _ui_fsm_channelSave(kbd_msg_t msg)
+{
+    uint16_t count = _ui_countChannels();
+    bool arm = false;
+
+    if((msg.keys & KEY_ESC) || (msg.keys & KEY_F2))
+    {
+        state.ui_screen = MAIN_VFO;
+    }
+    else if(msg.keys & (KEY_UP | KNOB_LEFT))
+    {
+        if(ui_state.menu_selected > 0)
+            ui_state.menu_selected--;
+    }
+    else if(msg.keys & (KEY_DOWN | KNOB_RIGHT))
+    {
+        if((ui_state.menu_selected < count)
+           && (ui_state.menu_selected + 1 < SAVE_MAX_CHANNELS))
+            ui_state.menu_selected++;
+    }
+    else if(msg.keys & KEY_ENTER)
+    {
+        static const char *const labels[] = { "", "FM", "DMR", "M17", "T",
+                                              "AM" };
+        channel_t channel = state.channel;
+        const char *label = (channel.mode < 6) ? labels[channel.mode] : "";
+        memset(channel.name, 0, sizeof(channel.name));
+        memset(channel.descr, 0, sizeof(channel.descr));
+        sniprintf(channel.name, sizeof(channel.name), "%s %lu.%04lu", label,
+                  (unsigned long)(channel.rx_frequency / 1000000),
+                  (unsigned long)((channel.rx_frequency % 1000000) / 100));
+
+        uint16_t pos = ui_state.menu_selected;
+        if(pos > count)
+            pos = count;
+        if(cps_writeChannel(channel, pos) == 0)
+        {
+            vp_beep(BEEP_FUNCTION_LATCH_ON, LONG_BEEP);
+            state.ui_screen = MAIN_VFO;
+        }
+    }
+    else if(msg.keys & KEY_HASH)
+    {
+        if(ui_state.menu_selected < count)
+        {
+            if(ui_state.save_delete_armed)
+            {
+                channel_t channel;
+                cps_readChannel(&channel, ui_state.menu_selected);
+                cps_deleteChannel(channel, ui_state.menu_selected);
+                vp_beep(BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
+            }
+            else
+            {
+                arm = true;
+            }
+        }
+    }
+    ui_state.save_delete_armed = arm;
+}
+#endif
+
 static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
 {
     // If there is no keyboard left and right select the menu entry to edit
@@ -1813,6 +1898,17 @@ void ui_updateFSM(bool *sync_rtx)
                             f1Handled = true;
                         }
                     }
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                    else if(msg.keys & KEY_F2)
+                    {
+                        // Save the VFO in a memory, a new one by default
+                        ui_state.menu_selected = _ui_countChannels();
+                        if(ui_state.menu_selected >= SAVE_MAX_CHANNELS)
+                            ui_state.menu_selected = SAVE_MAX_CHANNELS - 1;
+                        ui_state.save_delete_armed = false;
+                        state.ui_screen = CHANNEL_SAVE;
+                    }
+#endif
 #ifdef CONFIG_TETRA
                     else if((msg.keys & KEY_STAR)
                             && (state.channel.mode == OPMODE_TETRA))
@@ -1851,6 +1947,12 @@ void ui_updateFSM(bool *sync_rtx)
             // Spectrum screen
             case SPECTRUM:
                 _ui_fsm_spectrum(msg, sync_rtx);
+                break;
+#endif
+#ifdef CONFIG_UI_SAVE_CHANNEL
+            // Save VFO screen
+            case CHANNEL_SAVE:
+                _ui_fsm_channelSave(msg);
                 break;
 #endif
             // VFO frequency input screen
@@ -2977,6 +3079,12 @@ bool ui_updateGUI()
         // Spectrum screen
         case SPECTRUM:
             _ui_drawSpectrum(&ui_state);
+            break;
+#endif
+#ifdef CONFIG_UI_SAVE_CHANNEL
+        // Save VFO screen
+        case CHANNEL_SAVE:
+            _ui_drawChannelSave(&ui_state);
             break;
 #endif
     }

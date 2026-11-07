@@ -650,6 +650,39 @@ void _ui_drawMenuBank(ui_state_t* ui_state)
     _ui_drawMenuList(ui_state->menu_selected, _ui_getBankName);
 }
 
+#ifdef CONFIG_UI_SAVE_CHANNEL
+/**
+ * Save VFO screen entries: the memories, then a new one at the end.
+ */
+static int _ui_getSaveSlotName(char *buf, uint8_t max_len, uint8_t index)
+{
+    channel_t channel;
+    if(cps_readChannel(&channel, index) != -1)
+    {
+        sniprintf(buf, max_len, "M%03u %s", index + 1, channel.name);
+        return 0;
+    }
+    if((index == 0) || (cps_readChannel(&channel, index - 1) != -1))
+    {
+        sniprintf(buf, max_len, "M%03u + New", index + 1);
+        return 0;
+    }
+    return -1;
+}
+
+void _ui_drawChannelSave(ui_state_t* ui_state)
+{
+    gfx_clearScreen();
+    if(ui_state->save_delete_armed)
+        gfx_print(layout.top_pos, layout.top_font, TEXT_ALIGN_CENTER,
+                  yellow_fab413, "# again: delete");
+    else
+        gfx_print(layout.top_pos, layout.top_font, TEXT_ALIGN_CENTER,
+                  color_white, "Save VFO");
+    _ui_drawMenuList(ui_state->menu_selected, _ui_getSaveSlotName);
+}
+#endif
+
 void _ui_drawMenuChannel(ui_state_t* ui_state)
 {
     gfx_clearScreen();

@@ -53,7 +53,8 @@ enum uiScreen
     SETTINGS_ACCESSIBILITY,
     SETTINGS_RESET2DEFAULTS,
     LOW_BAT,
-    SPECTRUM
+    SPECTRUM,
+    CHANNEL_SAVE
 };
 
 /* TETRA pages of the VFO screen */
@@ -248,6 +249,10 @@ typedef struct ui_state_t
 #if defined(CONFIG_UI_NO_KEYBOARD)
     uint8_t macro_menu_selected;
 #endif // UI_NO_KEYBOARD
+#ifdef CONFIG_UI_SAVE_CHANNEL
+    // Save VFO screen: # pressed once on a memory, again deletes it
+    bool save_delete_armed;
+#endif
 #ifdef CONFIG_TETRA
     // TETRA page on the VFO screen, cycled with *: main, diagnostics, SDS
     uint8_t tetra_page;
