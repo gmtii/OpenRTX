@@ -127,13 +127,18 @@ void tetraDemod_init(struct tetraDemod *dm)
 }
 
 /**
- * Acquire the timing phase again and restart the equalizer, keeping the
- * gain and offset fit, the clock offset and the polarity. Symbols keep
- * coming out meanwhile, so the receiver's bit count stays continuous.
+ * Acquire the gain, the offset and the timing phase again and restart the
+ * equalizer, keeping the clock offset and the polarity.
+ *
+ * The fit adapts only while the phase error is low, so a fit gone wrong
+ * (an offset kilohertz off after tuning) can never correct itself: estimate
+ * it again from the moments of the signal. After a fade this costs one more
+ * re-acquisition at worst, if the moments were taken on noise.
  */
 static void reacquire(struct tetraDemod *dm)
 {
-    dm->symbols = WARMUP_SYMBOLS + TETRA_DEMOD_EQ_TAPS;
+    dm->symbols = 0;
+    dm->sx = dm->sxx = dm->st = dm->sxt = 0;
     dm->acquired = false;
     memset(dm->cost, 0, sizeof(dm->cost));
     memcpy(dm->eq, dm->eqInit, sizeof(dm->eq));
