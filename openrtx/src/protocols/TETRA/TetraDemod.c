@@ -52,6 +52,11 @@
 /* Follow a timing jump of 2 or more samples when its cost is this lower */
 #define SLIP_RATIO 0.5f
 #define POLARITY_WINDOW 16384
+/*
+ * A rotated sync sequence is acted on only if the right one has not come
+ * for this long (2 s): a whole multiframe carries one at least.
+ */
+#define ROTATION_HOLD 36000
 
 /* Synchronisation training sequence y, 38 bits, first bit in bit 37 */
 static const uint64_t SYNC_SEQ = 0x30673A7067ULL;
@@ -92,6 +97,7 @@ static float decisionError(float phi)
 void tetraDemod_init(struct tetraDemod *dm)
 {
     memset(dm, 0, sizeof(*dm));
+    dm->sinceSync = ROTATION_HOLD; /* No sync sequence seen yet */
 
     /*
      * 48 -> 144 kHz interpolator: windowed sinc, cut-off 21 kHz, split in
@@ -162,8 +168,32 @@ static void advance(struct tetraDemod *dm, float delta)
 }
 
 /**
- * Update the polarity detector with one symbol (in units of pi/4, before
- * any inversion).
+ * Check a shift register for the sync sequence, starting on either bit of
+ * a dibit.
+ */
+static bool syncHit(uint64_t sr)
+{
+    return (((sr >> 0) & SYNC_MASK) == SYNC_SEQ)
+        || (((sr >> 1) & SYNC_MASK) == SYNC_SEQ);
+}
+
+/**
+ * Correct a fit settled a number of quarter turns per symbol off: phases
+ * came out turns * pi/2 too large. The decision moments move with it, so
+ * the least-squares gain stays and the offset does not drift back.
+ */
+static void rotate(struct tetraDemod *dm, int turns)
+{
+    float shift = turns * (PI_F / 2);
+    dm->offset += shift / dm->gain;
+    dm->st -= shift;
+    dm->sxt -= shift * dm->sx;
+    dm->rotations++;
+}
+
+/**
+ * Update the polarity and rotation detectors with one symbol (in units of
+ * pi/4, before any inversion).
  */
 static void trackPolarity(struct tetraDemod *dm, int q)
 {
@@ -172,13 +202,39 @@ static void trackPolarity(struct tetraDemod *dm, int q)
     unsigned b2 = (q == 3) || (q == -3);
     dm->srNorm = (dm->srNorm << 2) | (b1 << 1) | b2;
     dm->srInv = (dm->srInv << 2) | ((b1 ^ 1) << 1) | b2;
-    /* The sequence can start on either bit of a dibit */
-    for (int s = 0; s < 2; s++) {
-        if (((dm->srNorm >> s) & SYNC_MASK) == SYNC_SEQ)
-            dm->hitsNorm++;
-        if (((dm->srInv >> s) & SYNC_MASK) == SYNC_SEQ)
-            dm->hitsInv++;
+    if (syncHit(dm->srNorm))
+        dm->hitsNorm++;
+    if (syncHit(dm->srInv))
+        dm->hitsInv++;
+
+    /* The right sync sequence: no rotation */
+    if (syncHit(dm->inverted ? dm->srInv : dm->srNorm))
+        dm->sinceSync = 0;
+    else if (dm->sinceSync < ROTATION_HOLD)
+        dm->sinceSync++;
+
+    /* The phase turned back by r quarter turns, both polarities */
+    for (int r = 1; r <= 3; r++) {
+        int t = q - 2 * r;
+        if (t < -3)
+            t += 8;
+        unsigned c1 = t < 0;
+        unsigned c2 = (t == 3) || (t == -3);
+        dm->srRot[r - 1][0] = (dm->srRot[r - 1][0] << 2) | (c1 << 1) | c2;
+        dm->srRot[r - 1][1] = (dm->srRot[r - 1][1] << 2) | ((c1 ^ 1) << 1) | c2;
+        for (int p = 0; p < 2; p++) {
+            if (!syncHit(dm->srRot[r - 1][p]) || dm->sinceSync < ROTATION_HOLD)
+                continue;
+            /* Smallest correction: three quarter turns is one back */
+            rotate(dm, (r == 3) ? -1 : r);
+            dm->inverted = (p == 1);
+            dm->sinceSync = 0;
+            dm->hitsNorm = dm->hitsInv = dm->polaritySymbols = 0;
+            memset(dm->srRot, 0, sizeof(dm->srRot));
+            return;
+        }
     }
+
     if (++dm->polaritySymbols == POLARITY_WINDOW) {
         bool inv = dm->inverted;
         if (!inv && dm->hitsInv > dm->hitsNorm + 2)
@@ -406,6 +462,11 @@ void tetraDemod_setEqualizer(struct tetraDemod *dm, const float *taps)
 {
     memcpy(dm->eq, taps, sizeof(dm->eq));
     memcpy(dm->eqInit, taps, sizeof(dm->eqInit));
+}
+
+uint32_t tetraDemod_rotations(const struct tetraDemod *dm)
+{
+    return dm->rotations;
 }
 
 uint32_t tetraDemod_reacquisitions(const struct tetraDemod *dm)

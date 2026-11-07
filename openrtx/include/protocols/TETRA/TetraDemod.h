@@ -72,6 +72,14 @@ struct tetraDemod {
     uint32_t hitsInv;
     uint32_t polaritySymbols;
     bool inverted;
+    /*
+     * Rotation: the fit can settle a quarter turn per symbol off (+-4.5 kHz),
+     * where every symbol still lands on a constellation point. The sync
+     * sequence turned by +pi/2, pi and -pi/2, both polarities, tells it.
+     */
+    uint64_t srRot[3][2];
+    uint32_t sinceSync; /* Symbols since the sync sequence came right */
+    uint32_t rotations; /* Quarter-turn corrections made */
     /* Statistics */
     uint32_t symbols;
     float errPow;        /* Running mean square phase error, rad^2 */
@@ -122,6 +130,12 @@ int tetraDemod_carrierOffset(const struct tetraDemod *dm);
  * again (the phase error stayed high), plus the timing jumps it followed.
  */
 uint32_t tetraDemod_reacquisitions(const struct tetraDemod *dm);
+
+/**
+ * @return number of times the carrier offset was corrected by a quarter
+ * turn per symbol (4.5 kHz steps) because the sync sequence came rotated.
+ */
+uint32_t tetraDemod_rotations(const struct tetraDemod *dm);
 
 /**
  * @return sample clock offset relative to the transmitter, in ppm.
