@@ -220,7 +220,10 @@ if(C62_SPECTRUM)
 endif()
 
 if(C62_RICH_UI)
-  target_compile_definitions(app PRIVATE CONFIG_UI_RICH_MAIN)
+  # Also the frequency step on macro keys 7 and 8, in place of the
+  # brightness, which the settings menu still sets
+  target_compile_definitions(app PRIVATE CONFIG_UI_RICH_MAIN
+                                         CONFIG_UI_MACRO_STEP)
 endif()
 
 message(STATUS "C62: wide RX ${C62_WIDE_RX}, TETRA ${C62_TETRA} "
