@@ -1165,7 +1165,18 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
             *sync_rtx = true;
             vp_announcePower(state.channel.power, queueFlags);
             break;
-#ifdef CONFIG_SCREEN_BRIGHTNESS
+#if defined(CONFIG_UI_MACRO_STEP)
+        case 7:
+            // Previous frequency step
+            state.step_index += n_freq_steps - 1;
+            state.step_index %= n_freq_steps;
+            break;
+        case 8:
+            // Next frequency step
+            state.step_index++;
+            state.step_index %= n_freq_steps;
+            break;
+#elif defined(CONFIG_SCREEN_BRIGHTNESS)
         case 7:
             _ui_changeBrightness(-5);
             vp_announceSettingsInt(&currentLanguage->brightness, queueFlags,

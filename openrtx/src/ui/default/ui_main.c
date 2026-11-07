@@ -1158,8 +1158,12 @@ static int _ui_richMeterPos(rssi_t dbm)
 /**
  * Segmented S-meter from y to the bottom of the screen, with the squelch
  * threshold if the mode has one.
+ *
+ * @param sqlLabel: show the squelch level on the left instead of the
+ * S-level, while it is being set.
  */
-static void _ui_richMeter(int16_t y, color_t accent, bool squelch)
+static void _ui_richMeter(int16_t y, color_t accent, bool squelch,
+                          bool sqlLabel)
 {
     const rssi_t rssi = last_state.rssi;
     const int16_t bottom = CONFIG_SCREEN_HEIGHT - 2;
@@ -1174,10 +1178,14 @@ static void _ui_richMeter(int16_t y, color_t accent, bool squelch)
     const int16_t segH = 9;
     int16_t segY = y + ((bottom - y) - segH - labelH - 3) / 2 + 4;
 
-    // S-level, large, on the left
+    // S-level, large, on the left, or the squelch level
     uint8_t s = rssiToSlevel(rssi);
     int16_t ty = segY + (segH - _ui_richCap(FONT_SIZE_10PT)) / 2;
-    if(s <= 9)
+    if(sqlLabel)
+        _ui_richPrint(RICH_PAD, segY + (segH - _ui_richCap(FONT_SIZE_8PT)) / 2,
+                      FONT_SIZE_8PT, TEXT_ALIGN_LEFT, accent, "SQ%u",
+                      last_state.settings.sqlLevel);
+    else if(s <= 9)
         _ui_richPrint(RICH_PAD, ty, FONT_SIZE_10PT, TEXT_ALIGN_LEFT, accent,
                       "S%u", s);
     else
@@ -1286,8 +1294,15 @@ static void _ui_richCard(int16_t y, int16_t h, color_t bg, color_t accent,
     gfx_drawRect((point_t){ x + 4, row + 2 }, 5, 5, stateColor, true);
     uint16_t sw = _ui_richPrint(x + 12, row, FONT_SIZE_8PT, TEXT_ALIGN_LEFT,
                                 stateColor, "%s", state);
-    _ui_richPrint(x + 15 + sw, row, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
-                  "%s", detail);
+
+    // Detail, smaller, only if it fits: gfx_print() would wrap it
+    int16_t dx = x + 16 + sw;
+    int16_t room = CONFIG_SCREEN_WIDTH - RICH_PAD - 3 - dx;
+    if(gfx_getTextWidth(FONT_SIZE_6PT, detail) <= room)
+        _ui_richPrint(dx, row + _ui_richCap(FONT_SIZE_8PT)
+                              - _ui_richCap(FONT_SIZE_6PT),
+                      FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey, "%s",
+                      detail);
 }
 
 /**
@@ -1337,12 +1352,13 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
     uint16_t fill = ((bw - 4) * last_state.charge) / 100;
     color_t bc = (last_state.charge > 20) ? rich_green : rich_red;
     gfx_drawRect((point_t){ (int16_t)(bx + 2), 6 }, fill, bh - 4, bc, true);
-    // The percentage only if it does not run into the receiver state
+    // The percentage only if it does not run into the receiver state, and
+    // not during a call: the frequency goes there
     char pct[8];
     sniprintf(pct, sizeof(pct), "%u%%", last_state.charge);
     uint16_t pw = gfx_getTextWidth(FONT_SIZE_6PT, pct);
     int16_t xe = bx - 3;
-    if(bx - 3 - pw >= x + 3)
+    if(!callShown && (bx - 3 - pw >= x + 3))
     {
         _ui_richPrint(CONFIG_SCREEN_WIDTH - bx + 3, 4, FONT_SIZE_6PT,
                       TEXT_ALIGN_RIGHT, color_white, "%s", pct);
@@ -1502,7 +1518,7 @@ static void _ui_richTetra(void)
         static const color_t bg = { 15, 42, 46, 255 };
         _ui_richCard(31, 60, bg, rich_teal, ts.callGroup ? "G" : "I", dst,
                      talker, "", sc, state, detail);
-        _ui_richMeter(93, rich_teal, false);
+        _ui_richMeter(93, rich_teal, false, false);
         return;
     }
 
@@ -1545,7 +1561,7 @@ static void _ui_richTetra(void)
                       rich_grey, "No call");
     }
 
-    _ui_richMeter(89, rich_teal, false);
+    _ui_richMeter(89, rich_teal, false, false);
 }
 #endif
 
@@ -1619,7 +1635,7 @@ static void _ui_richDmr(void)
         static const color_t bg = { 29, 24, 48, 255 };
         _ui_richCard(31, 60, bg, rich_violet, si.group ? "TG" : "ID", dst,
                      talker, id, sc, state, detail);
-        _ui_richMeter(93, rich_violet, false);
+        _ui_richMeter(93, rich_violet, false, false);
         return;
     }
 
@@ -1631,7 +1647,7 @@ static void _ui_richDmr(void)
                  17, rich_dark, false);
     _ui_richPrint(RICH_PAD + 3, 72, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
                   "No call");
-    _ui_richMeter(89, rich_violet, false);
+    _ui_richMeter(89, rich_violet, false, false);
 }
 #endif
 
@@ -1662,16 +1678,31 @@ static void _ui_richM17(ui_state_t *ui_state)
         sniprintf(detail, sizeof(detail), "%.13s", extra);
         _ui_richCard(31, 60, bg, rich_orange, "TO", rtx.M17_dst, rtx.M17_src,
                      "", rich_green, "Voice", detail);
-        _ui_richMeter(93, rich_orange, false);
+        _ui_richMeter(93, rich_orange, false, false);
         return;
     }
 
     _ui_richFrequency(34);
     _ui_richPrint(RICH_PAD, 62, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, color_white,
                   "%d dBm", (int)last_state.rssi);
-    _ui_richMeter(74, rich_orange, false);
+    _ui_richMeter(74, rich_orange, false, false);
 }
 #endif
+
+/**
+ * Bottom of the macro menu: the S-meter, with the squelch level and
+ * threshold in FM and AM, where the macro menu sets them.
+ */
+void _ui_drawRichMacroBottom(void)
+{
+    const char *name;
+    color_t accent = _ui_richModeColor(&name);
+    bool analog = (last_state.channel.mode == OPMODE_FM);
+    #ifdef CONFIG_AM
+    analog = analog || (last_state.channel.mode == OPMODE_AM);
+    #endif
+    _ui_richMeter(CONFIG_SCREEN_HEIGHT - 31, accent, analog, analog);
+}
 
 /**
  * The main screen, VFO or memory.
@@ -1699,7 +1730,7 @@ static void _ui_drawRichMain(ui_state_t *ui_state, bool mem)
         #endif
         default:
             _ui_richAnalog(mem);
-            _ui_richMeter(74, yellow_fab413, true);
+            _ui_richMeter(74, yellow_fab413, true, false);
             return;
     }
 }

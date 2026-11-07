@@ -1171,6 +1171,27 @@ void _ui_drawMacroTop()
     }
 }
 
+#ifdef CONFIG_UI_RICH_MAIN
+extern void _ui_drawRichMacroBottom(void);
+#endif
+
+#ifdef CONFIG_UI_MACRO_STEP
+/**
+ * A frequency step in kHz: "6.25k", "12.5k", "25k".
+ */
+static void _ui_stepString(char *buf, size_t len, uint32_t hz)
+{
+    if(hz % 1000 == 0)
+        sniprintf(buf, len, "%luk", (unsigned long)(hz / 1000));
+    else if(hz % 100 == 0)
+        sniprintf(buf, len, "%lu.%luk", (unsigned long)(hz / 1000),
+                  (unsigned long)((hz % 1000) / 100));
+    else
+        sniprintf(buf, len, "%lu.%02luk", (unsigned long)(hz / 1000),
+                  (unsigned long)((hz % 1000) / 10));
+}
+#endif
+
 bool _ui_drawMacroMenu(ui_state_t* ui_state)
 {
     // Header
@@ -1337,7 +1358,15 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
 #endif // CONFIG_UI_NO_KEYBOARD
     gfx_print(layout.line3_large_pos, layout.top_font, TEXT_ALIGN_LEFT,
               yellow_fab413, "7");
-#ifdef CONFIG_SCREEN_BRIGHTNESS
+#if defined(CONFIG_UI_MACRO_STEP)
+    char step_str[8];
+    _ui_stepString(step_str, sizeof(step_str),
+                   freq_steps[last_state.step_index]);
+    gfx_print(layout.line3_large_pos, layout.top_font, TEXT_ALIGN_LEFT,
+              color_white, "  S-");
+    gfx_print(layout.line3_large_pos, layout.top_font, TEXT_ALIGN_LEFT,
+              color_white, "      %6s", step_str);
+#elif defined(CONFIG_SCREEN_BRIGHTNESS)
     gfx_print(layout.line3_large_pos, layout.top_font, TEXT_ALIGN_LEFT,
               color_white, "  B-");
     gfx_print(layout.line3_large_pos, layout.top_font, TEXT_ALIGN_LEFT,
@@ -1350,7 +1379,10 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
 #endif // CONFIG_UI_NO_KEYBOARD
     gfx_print(layout.line3_large_pos, layout.top_font, TEXT_ALIGN_CENTER,
               yellow_fab413, "8");
-#ifdef CONFIG_SCREEN_BRIGHTNESS
+#if defined(CONFIG_UI_MACRO_STEP)
+    gfx_print(layout.line3_large_pos, layout.top_font, TEXT_ALIGN_CENTER,
+              color_white, "        S+");
+#elif defined(CONFIG_SCREEN_BRIGHTNESS)
     gfx_print(layout.line3_large_pos, layout.top_font, TEXT_ALIGN_CENTER,
               color_white, "        B+");
 #endif
@@ -1368,6 +1400,10 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
                     color_white, "Lck");
 
     // Draw S-meter bar
+#ifdef CONFIG_UI_RICH_MAIN
+    _ui_drawRichMacroBottom();
+#else
     _ui_drawMainBottom();
+#endif
     return true;
 }
