@@ -48,8 +48,9 @@ static pthread_t thread;
 static pthread_attr_t attr;
 static volatile bool running;
 static volatile bool stopRequest;
+static volatile bool playing; /* Speech on the speaker */
 
-static uint32_t lateBursts; /* Halves refilled after they started playing */
+static uint32_t lateBursts;   /* Halves refilled after they started playing */
 static long long nextStats;
 
 /**
@@ -135,6 +136,7 @@ static void playBurst(void)
     }
 
     outputStream_sync(stream, false);
+    playing = true;
 
     unsigned silence = 0;
     while (!stopRequest && silence < SILENCE_BURSTS
@@ -156,8 +158,14 @@ static void playBurst(void)
         printStats();
     }
 
+    playing = false;
     audioStream_stop(stream);
     audioPath_release(path);
+}
+
+bool dmrSpeech_playing(void)
+{
+    return playing;
 }
 
 static void *playback(void *arg)
@@ -215,6 +223,11 @@ void dmrSpeech_stop(void)
 }
 
 #else  /* DMR_VOICE_ENABLED */
+
+bool dmrSpeech_playing(void)
+{
+    return false;
+}
 
 void dmrSpeech_start(void)
 {

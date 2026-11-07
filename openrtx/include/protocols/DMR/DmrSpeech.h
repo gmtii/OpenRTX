@@ -7,6 +7,8 @@
 #ifndef OPENRTX_DMR_SPEECH_H
 #define OPENRTX_DMR_SPEECH_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -31,6 +33,12 @@ void dmrSpeech_start(void);
  * Stop the playback thread and release the speaker.
  */
 void dmrSpeech_stop(void);
+
+/**
+ * Check whether speech is being played, until a second after its end:
+ * only clear calls are played. Wakes the screen like an open squelch.
+ */
+bool dmrSpeech_playing(void);
 
 #ifdef __cplusplus
 }

@@ -50,6 +50,7 @@ static pthread_t thread;
 static pthread_attr_t attr;
 static volatile bool running;
 static volatile bool stopRequest;
+static volatile bool playing; /* Speech on the speaker */
 
 /*
  * Console figures, every STATS_MS while traffic arrives: traffic slots, the
@@ -138,6 +139,7 @@ static void playBurst(void)
 
     oa_dec_init(&decoder, &oa_tables_tetra);
     outputStream_sync(stream, false);
+    playing = true;
 
     unsigned silence = 0;
     while (!stopRequest && silence < SILENCE_FRAMES
@@ -158,8 +160,14 @@ static void playBurst(void)
         outputStream_sync(stream, true);
     }
 
+    playing = false;
     audioStream_stop(stream);
     audioPath_release(path);
+}
+
+bool tetraSpeech_playing(void)
+{
+    return playing;
 }
 
 static void *playback(void *arg)
@@ -269,6 +277,11 @@ void tetraSpeech_traffic(const struct tetra_traffic *t,
 #else /* CONFIG_TETRA_SPEECH */
 
 #include <string.h>
+
+bool tetraSpeech_playing(void)
+{
+    return false;
+}
 
 void tetraSpeech_start(void)
 {

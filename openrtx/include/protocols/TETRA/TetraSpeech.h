@@ -9,6 +9,8 @@
 
 #include <stdint.h>
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,6 +65,12 @@ void tetraSpeech_start(void);
  * Stop the playback thread and release the speaker.
  */
 void tetraSpeech_stop(void);
+
+/**
+ * Check whether speech is being played, until a second after its end:
+ * only clear calls are played. Wakes the screen like an open squelch.
+ */
+bool tetraSpeech_playing(void);
 
 /**
  * Queue the speech frames of a traffic slot. Call from the libtetra event
