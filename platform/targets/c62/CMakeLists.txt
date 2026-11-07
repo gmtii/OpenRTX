@@ -219,6 +219,10 @@ if(C62_SPECTRUM)
   target_compile_definitions(app PRIVATE CONFIG_SPECTRUM)
 endif()
 
+# Channel memories saved from the radio (cps_io_C62.c): P2 on the VFO
+# screen saves the VFO
+target_compile_definitions(app PRIVATE CONFIG_UI_SAVE_CHANNEL)
+
 if(C62_RICH_UI)
   # Also the frequency step on macro keys 7 and 8, in place of the
   # brightness, which the settings menu still sets
