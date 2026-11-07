@@ -88,6 +88,9 @@ option(C62_AM "AM receive mode and air band" ON)
 # C62_SPECTRUM: spectrum view (MONI + 0 on the VFO screen), RSSI swept
 #   across a range; PTT tunes the VFO to the marker.
 option(C62_SPECTRUM "Spectrum view" ON)
+# C62_RICH_UI: main screen with a mode badge, the receiver state, call
+#   cards and a segmented S-meter (CONFIG_UI_RICH_MAIN).
+option(C62_RICH_UI "Rich main screen" ON)
 
 if(C62_WIDE_RX)
   target_compile_definitions(app PRIVATE C62_WIDE_RX)
@@ -216,9 +219,13 @@ if(C62_SPECTRUM)
   target_compile_definitions(app PRIVATE CONFIG_SPECTRUM)
 endif()
 
+if(C62_RICH_UI)
+  target_compile_definitions(app PRIVATE CONFIG_UI_RICH_MAIN)
+endif()
+
 message(STATUS "C62: wide RX ${C62_WIDE_RX}, TETRA ${C62_TETRA} "
                "(speech ${C62_TETRA_SPEECH}), DMR ${c62_dmr_status}, "
-               "AM ${C62_AM}, spectrum ${C62_SPECTRUM}, "
+               "AM ${C62_AM}, spectrum ${C62_SPECTRUM}, rich UI ${C62_RICH_UI}, "
                "REG_43 sweep ${C62_REG43_SWEEP}, "
                "baseband dump ${C62_BASEBAND_DUMP} "
                "(${C62_BASEBAND_DUMP_BAUD} baud, format "
