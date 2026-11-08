@@ -1668,12 +1668,22 @@ static void _ui_richTetra(void)
     {
         uint16_t w = _ui_richPrint(x, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT,
                                    color_white, "%u-%u", ts.mcc, ts.mnc);
-        if(ts.sysinfo)
-            _ui_richPrint(x + w + 4, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
-                          rich_grey, "LA%u", ts.la);
+
+        // Air encryption on the right, the location area only if it fits
+        // before it
+        int16_t end = CONFIG_SCREEN_WIDTH - RICH_PAD;
         if(ts.airEncryption)
-            _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT,
-                          rich_grey, "AIE");
+            end -= _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT,
+                                 TEXT_ALIGN_RIGHT, rich_grey, "AIE") + 4;
+        if(ts.sysinfo)
+        {
+            char la[12];
+            sniprintf(la, sizeof(la), "LA%u", ts.la);
+            int16_t lx = x + w + 4;
+            if(lx + gfx_getTextWidth(FONT_SIZE_6PT, la) <= end)
+                _ui_richPrint(lx, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                              rich_grey, "%s", la);
+        }
     }
     else
     {
