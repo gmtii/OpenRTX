@@ -1601,6 +1601,59 @@ static void _ui_richAnalog(bool mem)
 
 #ifdef CONFIG_TETRA
 /**
+ * Text on one line of a given width: as it is if it fits, else scrolling
+ * left one character every 150 ms, after a second at its start. Never
+ * wraps, as gfx_print() would.
+ */
+static void _ui_richScroll(int16_t x, int16_t y, int16_t w, fontSize_t font,
+                           color_t color, const char *text)
+{
+    static char shown[128]; // Text being scrolled
+    static size_t pos;
+    static long long next;
+    long long now = getTick();
+
+    if(strncmp(shown, text, sizeof(shown) - 1) != 0)
+    {
+        strncpy(shown, text, sizeof(shown) - 1);
+        shown[sizeof(shown) - 1] = '\0';
+        pos = 0;
+        next = now + 1000;
+    }
+
+    size_t len = strlen(shown);
+    char line[64];
+    if(gfx_getTextWidth(font, shown) <= w)
+    {
+        _ui_richPrint(x, y, font, TEXT_ALIGN_LEFT, color, "%s", shown);
+        return;
+    }
+
+    // The text and a gap, looped, from pos on, as much as fits
+    const size_t loop = len + 4;
+    size_t n = 0;
+    while(n + 1 < sizeof(line))
+    {
+        size_t k = (pos + n) % loop;
+        line[n] = (k < len) ? shown[k] : ' ';
+        line[n + 1] = '\0';
+        if(gfx_getTextWidth(font, line) > w)
+        {
+            line[n] = '\0';
+            break;
+        }
+        n++;
+    }
+    _ui_richPrint(x, y, font, TEXT_ALIGN_LEFT, color, "%s", line);
+
+    if(now >= next)
+    {
+        pos = (pos + 1) % loop;
+        next = now + ((pos == 0) ? 1000 : 150);
+    }
+}
+
+/**
  * TETRA: the cell, the frequency, the signal quality and the last SDS, or
  * the call in a card.
  */
@@ -1707,9 +1760,12 @@ static void _ui_richTetra(void)
     }
     else if(ts.sdsSrc != 0 && age < TETRA_SDS_SHOW_MS)
     {
-        _ui_richPrint(RICH_PAD + 3, by + 4, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
-                      color_white, "%lu: %.16s", (unsigned long)ts.sdsSrc,
-                      ts.sds);
+        char sds[96];
+        sniprintf(sds, sizeof(sds), "%lu: %s", (unsigned long)ts.sdsSrc,
+                  ts.sds);
+        _ui_richScroll(RICH_PAD + 3, by + 4,
+                       CONFIG_SCREEN_WIDTH - 2 * RICH_PAD - 6, FONT_SIZE_6PT,
+                       color_white, sds);
     }
     else
     {
