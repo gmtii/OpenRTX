@@ -284,6 +284,9 @@ static void lipPosition(int32_t latRaw, int32_t lonRaw, int speed, int dir)
 {
     const float lat = (float)latRaw * (180.0f / 16777216.0f);
     const float lon = (float)lonRaw * (360.0f / 33554432.0f);
+    cur.pos = true;
+    cur.lat = (int32_t)(lat * 100000.0f + (lat < 0 ? -0.5f : 0.5f));
+    cur.lon = (int32_t)(lon * 100000.0f + (lon < 0 ? -0.5f : 0.5f));
     int o = printDeg(cur.text, sizeof(cur.text), lat);
     cur.text[o++] = ' ';
     o += printDeg(cur.text + o, sizeof(cur.text) - o, lon);

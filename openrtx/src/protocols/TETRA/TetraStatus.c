@@ -9,6 +9,7 @@
 #include <string.h>
 #include <tetra/tetra.h>
 #include "interfaces/delays.h"
+#include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraStatus.h"
@@ -169,6 +170,7 @@ static void onSds(const struct tetra_sds *s)
     struct tetraSds m;
     if (!tetraSds_receive(s, &m))
         return;
+    tetraHeard_sds(&m);
 
     /* Line 1 shows text and status; locations and data are listed only */
     if (m.kind != TETRA_SDS_KIND_TEXT && m.kind != TETRA_SDS_KIND_STATUS)
@@ -183,6 +185,7 @@ static void onSds(const struct tetra_sds *s)
 static void onCall(const struct tetra_call *c)
 {
     trackCall(c);
+    tetraHeard_call(c);
 
     switch (c->what) {
         case TETRA_CALL_RELEASE:
@@ -275,6 +278,10 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
             onSds(&ev->u.sds);
             break;
 
+        case TETRA_EV_MM:
+            tetraHeard_mm(ev->u.mm);
+            break;
+
         default:
             break;
     }
@@ -288,6 +295,7 @@ void tetraStatus_reset(void)
     memset(calls, 0, sizeof(calls));
     pthread_mutex_unlock(&statusMutex);
     tetraSds_reset();
+    tetraHeard_reset();
 }
 
 void tetraStatus_lostSync(bool overrun)

@@ -55,6 +55,9 @@ struct tetraSds {
     uint8_t pid;      /**< Protocol identifier (user defined data 4) */
     uint8_t parts;    /**< Concatenated: parts, 0 for a single message */
     uint8_t partsGot; /**< Concatenated: parts received */
+    bool pos;         /**< Location report with a position */
+    int32_t lat;      /**< Its latitude, 1e-5 degrees */
+    int32_t lon;      /**< Its longitude, 1e-5 degrees */
     char text[TETRA_SDS_TEXT];
 };
 
