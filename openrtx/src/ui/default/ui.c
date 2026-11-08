@@ -1194,9 +1194,23 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg)
 
     if(msg.keys & KEY_STAR)
     {
-        // Next TETRA page: main, diagnostics, SDS, groups, radios, symbols
+        // Next TETRA page: main, diagnostics, SDS, groups, radios, calls,
+        // cell, neighbours, symbols
         ui_state.tetra_page = (ui_state.tetra_page + 1) % TETRA_PAGE_NUM;
         ui_state.tetra_sds_sel = 0;
+        return true;
+    }
+
+    // On a page, a number goes straight to that page, 0 the main one; on
+    // the main page numbers still type a frequency
+    if((ui_state.tetra_page != TETRA_PAGE_MAIN) && input_isNumberPressed(msg))
+    {
+        uint8_t page = input_getPressedNumber(msg);
+        if(page < TETRA_PAGE_NUM)
+        {
+            ui_state.tetra_page = page;
+            ui_state.tetra_sds_sel = 0;
+        }
         return true;
     }
 
@@ -1212,6 +1226,9 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg)
             break;
         case TETRA_PAGE_RADIOS:
             entries = TETRA_HEARD_RADIOS;
+            break;
+        case TETRA_PAGE_CALLS:
+            entries = TETRA_HEARD_CALLS;
             break;
         default:
             return false;

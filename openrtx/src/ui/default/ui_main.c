@@ -15,8 +15,19 @@
 #include "ui/ui_strings.h"
 #include "core/utils.h"
 #include "ui/utils.h"
+/*
+ * Copies of large tables for the pages that show them, filled before each
+ * use: in PSRAM on the C62.
+ */
+#ifdef PLATFORM_C62
+#define UI_BSS __attribute__((section(".psram_section")))
+#else
+#define UI_BSS
+#endif
+
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraStatus.h"
+#include "protocols/TETRA/TetraCell.h"
 #include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
@@ -759,7 +770,7 @@ static void _ui_drawTetraSds(ui_state_t *ui_state)
     static const char *const kinds[] = { "Status", "Short data", "Text",
                                          "Location", "Report", "Encrypted",
                                          "Data" };
-    static struct tetraSds list[TETRA_SDS_MAX];
+    static UI_BSS struct tetraSds list[TETRA_SDS_MAX];
     int n = tetraSds_get(list, TETRA_SDS_MAX);
 
     const fontSize_t font = FONT_SIZE_6PT;
@@ -881,8 +892,9 @@ static int16_t _ui_heardList(ui_state_t *ui_state, const char *title, int n,
     return dy;
 }
 
-static struct tetraGroup heardGroups[TETRA_HEARD_GROUPS];
-static struct tetraRadio heardRadios[TETRA_HEARD_RADIOS];
+static UI_BSS struct tetraGroup heardGroups[TETRA_HEARD_GROUPS];
+static UI_BSS struct tetraCallInfo heardCalls[TETRA_HEARD_CALLS];
+static UI_BSS struct tetraRadio heardRadios[TETRA_HEARD_RADIOS];
 
 static const char *const radioActivity[] = { "call", "talk", "SDS", "reg" };
 
@@ -903,6 +915,69 @@ static void _ui_radioRow(int i, char *l, char *m, char *r, size_t len)
     else
         sniprintf(m, len, "%s", radioActivity[rd->activity & 3]);
     _ui_ago(r, 8, rd->last);
+}
+
+static void _ui_callRow(int i, char *l, char *m, char *r, size_t len)
+{
+    const struct tetraCallInfo *c = &heardCalls[i];
+    if(c->dst != 0)
+        sniprintf(l, len, "%s %lu", c->group ? "G" : "I",
+                  (unsigned long)c->dst);
+    else
+        sniprintf(l, len, "Call %u", c->id);
+    if(c->talker != 0)
+        sniprintf(m, len, "%lu", (unsigned long)c->talker);
+    else
+        m[0] = '\0';
+    if(c->active)
+        sniprintf(r, 8, "now");
+    else
+        _ui_ago(r, 8, c->last);
+}
+
+/**
+ * TETRA calls page: the calls heard, then the picked one's state, length
+ * and talkers.
+ */
+static void _ui_drawTetraCalls(ui_state_t *ui_state)
+{
+    int n = tetraHeard_calls(heardCalls, TETRA_HEARD_CALLS);
+    int16_t y = _ui_heardList(ui_state, "Calls", n, _ui_callRow);
+    if(n == 0)
+        return;
+
+    const struct tetraCallInfo *c = &heardCalls[ui_state->tetra_sds_sel];
+    const fontSize_t font = FONT_SIZE_6PT;
+    point_t pos = { layout.horizontal_pad, (int16_t)(y + 8) };
+    long secs = (long)((c->last - c->start) / 1000);
+    gfx_print(pos, font, TEXT_ALIGN_LEFT,
+              c->active ? (color_t){ 63, 191, 95, 255 } : color_white,
+              "Call %u, %s %ld:%02ld%s", c->id, c->active ? "active" : "ended",
+              secs / 60, secs % 60, c->encrypted ? ", enc" : "");
+
+    // Its talkers, as many as fit on a line
+    char line[48];
+    size_t o = 0;
+    line[0] = '\0';
+    for(int k = 0; k < c->ntalkers; k++)
+    {
+        char id[12];
+        sniprintf(id, sizeof(id), "%s%lu", k ? " " : "",
+                  (unsigned long)c->talkers[k]);
+        if(o + strlen(id) + 1 > sizeof(line))
+            break;
+        strcpy(line + o, id);
+        if(gfx_getTextWidth(font, line)
+           > CONFIG_SCREEN_WIDTH - 2 * layout.horizontal_pad)
+        {
+            line[o] = '\0';
+            break;
+        }
+        o += strlen(id);
+    }
+    pos.y += 11;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "%s",
+              line[0] ? line : "No talker known");
 }
 
 /**
@@ -947,6 +1022,176 @@ static void _ui_drawTetraGroups(ui_state_t *ui_state)
 }
 
 /**
+ * A frequency in MHz with four decimals, or a dash.
+ */
+static void _ui_mhz(char *buf, size_t len, uint32_t hz)
+{
+    if(hz == 0)
+        sniprintf(buf, len, "-");
+    else
+        sniprintf(buf, len, "%lu.%04lu", (unsigned long)(hz / 1000000),
+                  (unsigned long)((hz % 1000000) / 100));
+}
+
+static const char *const cellLoad[] = { "?", "low", "medium", "high" };
+
+/**
+ * TETRA cell page: identity, frequencies, services, encryption, load,
+ * network time.
+ */
+static void _ui_drawTetraCell(void)
+{
+    struct tetraCellInfo c;
+    tetraCell_get(&c);
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = 11;
+    point_t pos = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
+
+    if(!c.valid)
+    {
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "Cell");
+        pos.y += 2 * step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "No cell yet");
+        return;
+    }
+
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "Cell %u-%u CC%u",
+              c.mcc, c.mnc, c.colourCode);
+    if(c.sysinfo)
+        gfx_print(pos, font, TEXT_ALIGN_RIGHT, yellow_fab413, "LA %u", c.la);
+
+    if(c.sysinfo)
+    {
+        static const char *const offsets[] = { "", " +6.25k", " -6.25k",
+                                               " +12.5k" };
+        char dl[16], ul[16];
+        _ui_mhz(dl, sizeof(dl), c.dlHz);
+        _ui_mhz(ul, sizeof(ul), c.ulHz);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "DL %s UL %s", dl,
+                  ul);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey,
+                  "Ch %u B%u%s D%u%s", c.carrier, c.band,
+                  offsets[c.offset & 3], c.duplex, c.reverse ? " rev" : "");
+
+        // Services offered, the ones present
+        static const struct { uint16_t bit; const char *name; } serv[] = {
+            { TETRA_SERV_VOICE, "Voice" }, { TETRA_SERV_CSD, "CSD" },
+            { TETRA_SERV_PACKET, "Pkt" },  { TETRA_SERV_REG, "Reg" },
+            { TETRA_SERV_PRIORITY, "Prio" },
+            { TETRA_SERV_SYS_WIDE, "SysW" },
+            { TETRA_SERV_MIGRATION, "Migr" },
+            { TETRA_SERV_ADV_LINK, "AdvL" },
+        };
+        // As many as fit on the line: gfx_print() would wrap the rest
+        char sv[64] = "";
+        size_t o = 0;
+        const int16_t room = CONFIG_SCREEN_WIDTH - 2 * layout.horizontal_pad;
+        for(size_t i = 0; i < sizeof(serv) / sizeof(serv[0]); i++)
+        {
+            if(!(c.services & serv[i].bit) || o + 8 >= sizeof(sv))
+                continue;
+            size_t prev = o;
+            o += sniprintf(sv + o, sizeof(sv) - o, "%s%s", o ? " " : "",
+                           serv[i].name);
+            if(gfx_getTextWidth(font, sv) > room)
+            {
+                sv[prev] = '\0';
+                break;
+            }
+        }
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", sv);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+                  "Air enc %s, load %s",
+                  (c.services & TETRA_SERV_AIE) ? "yes" : "no",
+                  cellLoad[c.load & 3]);
+    }
+    else
+    {
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "Waiting for SYSINFO");
+    }
+
+    static const char *const sharing[] = { "continuous", "carrier sharing",
+                                           "MCCH sharing", "traffic sharing" };
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "Sys %u%s, %s",
+              c.systemCode, (c.systemCode == 3) ? " (V3)" : "",
+              sharing[c.sharing & 3]);
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "HF %u CCK %u",
+              c.hyperframe, c.cck);
+
+    struct tetraTime t;
+    pos.y += step;
+    if(tetraCell_time(&t))
+    {
+        // Date and time, and the offset from UTC if it fits
+        char tm[40];
+        int o = sniprintf(tm, sizeof(tm), "%04u-%02u-%02u %02u:%02u:%02u",
+                          t.year, t.month, t.day, t.hour, t.minute, t.second);
+        sniprintf(tm + o, sizeof(tm) - o, " %c%02d:%02d",
+                  (t.offsetMin < 0) ? '-' : '+', abs(t.offsetMin) / 60,
+                  abs(t.offsetMin) % 60);
+        if(gfx_getTextWidth(font, tm)
+           > CONFIG_SCREEN_WIDTH - 2 * layout.horizontal_pad)
+            tm[o] = '\0';
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", tm);
+    }
+    else
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "No network time yet");
+}
+
+/**
+ * TETRA neighbours page: the cells announced by the serving one.
+ */
+static void _ui_drawTetraNeighbours(void)
+{
+    static UI_BSS struct tetraNeighbourInfo nb[TETRA_NEIGHBOURS_KEPT];
+    int n = tetraCell_neighbours(nb, TETRA_NEIGHBOURS_KEPT);
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = 11;
+    point_t pos = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
+
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "Neighbours %d", n);
+    if(n == 0)
+    {
+        pos.y += 2 * step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "None announced yet");
+        return;
+    }
+
+    static const char *const load[] = { "?", "lo", "med", "hi" };
+    const int16_t room = CONFIG_SCREEN_WIDTH - 2 * layout.horizontal_pad;
+    for(int i = 0; i < n && pos.y + step < CONFIG_SCREEN_HEIGHT; i++)
+    {
+        char left[32], right[12];
+        _ui_mhz(right, sizeof(right), nb[i].dlHz);
+        int o = sniprintf(left, sizeof(left), "#%u %s", nb[i].cellId, right);
+        sniprintf(right, sizeof(right), "%s%s", load[nb[i].load & 3],
+                  nb[i].synchronised ? " S" : "");
+
+        // Its network or location area when other than the serving cell's,
+        // if it fits
+        if(nb[i].mcc != 0xffff || nb[i].mnc != 0xffff)
+            sniprintf(left + o, sizeof(left) - o, " %u-%u", nb[i].mcc,
+                      nb[i].mnc);
+        else if(nb[i].la != 0xffff)
+            sniprintf(left + o, sizeof(left) - o, " LA%u", nb[i].la);
+        if(gfx_getTextWidth(font, left) + 6 + gfx_getTextWidth(font, right)
+           > room)
+            left[o] = '\0';
+
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", left);
+        gfx_print(pos, font, TEXT_ALIGN_RIGHT, color_grey, "%s", right);
+    }
+}
+
+/**
  * TETRA radios page: the radios heard, then the picked one's activity and
  * last position.
  */
@@ -987,8 +1232,8 @@ static void _ui_drawTetraRadios(ui_state_t *ui_state)
  */
 static void _ui_drawTetraScope(void)
 {
-    static float d[TETRA_DEMOD_SCOPE];
-    static float y[TETRA_DEMOD_SCOPE];
+    static UI_BSS float d[TETRA_DEMOD_SCOPE];
+    static UI_BSS float y[TETRA_DEMOD_SCOPE];
     float levels[4];
     tetraDemod_scope(tetra_getDemod(), d, y, levels);
 
@@ -1088,6 +1333,11 @@ static bool _ui_drawTetraPage(ui_state_t *ui_state)
         return false;
 
     _ui_drawMainTop(ui_state);
+
+    // Page number, the key that goes straight to it
+    gfx_print(layout.top_pos, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, color_grey,
+              "%u/%u", ui_state->tetra_page, TETRA_PAGE_NUM - 1);
+
     switch(ui_state->tetra_page)
     {
         case TETRA_PAGE_DEBUG:
@@ -1101,6 +1351,15 @@ static bool _ui_drawTetraPage(ui_state_t *ui_state)
             break;
         case TETRA_PAGE_RADIOS:
             _ui_drawTetraRadios(ui_state);
+            break;
+        case TETRA_PAGE_CALLS:
+            _ui_drawTetraCalls(ui_state);
+            break;
+        case TETRA_PAGE_CELL:
+            _ui_drawTetraCell();
+            break;
+        case TETRA_PAGE_NEIGHBOURS:
+            _ui_drawTetraNeighbours();
             break;
         case TETRA_PAGE_SCOPE:
             _ui_drawTetraScope();
@@ -1703,7 +1962,16 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
             || last_state.channel.mode == OPMODE_AM
         #endif
             || last_state.channel.mode == OPMODE_DMR)
-        sniprintf(mid, sizeof(mid), "RX only");
+    {
+        #ifdef CONFIG_TETRA
+        // The TETRA network time, once received, as the radio's clock
+        struct tetraTime t;
+        if(tetraCell_time(&t))
+            sniprintf(mid, sizeof(mid), "%02u:%02u", t.hour, t.minute);
+        else
+        #endif
+            sniprintf(mid, sizeof(mid), "RX only");
+    }
     else if(p % 1000)
         sniprintf(mid, sizeof(mid), "%lu.%lu W", (unsigned long)(p / 1000),
                   (unsigned long)((p % 1000) / 100));
