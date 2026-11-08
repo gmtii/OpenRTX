@@ -66,6 +66,7 @@
 #include "core/voicePromptUtils.h"
 #include "core/beeps.h"
 #ifdef CONFIG_TETRA
+#include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraSds.h"
 #endif
 
@@ -1131,15 +1132,30 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg)
 
     if(msg.keys & KEY_STAR)
     {
-        // Next TETRA page: main, diagnostics, SDS, symbols
+        // Next TETRA page: main, diagnostics, SDS, groups, radios, symbols
         ui_state.tetra_page = (ui_state.tetra_page + 1) % TETRA_PAGE_NUM;
         ui_state.tetra_sds_sel = 0;
         return true;
     }
 
-    if(ui_state.tetra_page != TETRA_PAGE_SDS)
-        return false;
+    // List pages: SDS, groups and radios
+    uint8_t entries;
+    switch(ui_state.tetra_page)
+    {
+        case TETRA_PAGE_SDS:
+            entries = TETRA_SDS_MAX;
+            break;
+        case TETRA_PAGE_GROUPS:
+            entries = TETRA_HEARD_GROUPS;
+            break;
+        case TETRA_PAGE_RADIOS:
+            entries = TETRA_HEARD_RADIOS;
+            break;
+        default:
+            return false;
+    }
 
+    // The pages bring the picked entry back within the list
     if(msg.keys & (KEY_UP | KNOB_RIGHT))
     {
         if(ui_state.tetra_sds_sel > 0)
@@ -1148,7 +1164,7 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg)
     }
     if(msg.keys & (KEY_DOWN | KNOB_LEFT))
     {
-        if(ui_state.tetra_sds_sel + 1 < TETRA_SDS_MAX)
+        if(ui_state.tetra_sds_sel + 1 < entries)
             ui_state.tetra_sds_sel++;
         return true;
     }

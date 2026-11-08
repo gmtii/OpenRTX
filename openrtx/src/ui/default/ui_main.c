@@ -8,6 +8,7 @@
 #include "interfaces/cps_io.h"
 #include "interfaces/delays.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include "ui/ui_default.h"
 #include <string.h>
@@ -16,6 +17,7 @@
 #include "ui/utils.h"
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraStatus.h"
+#include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraDemod.h"
@@ -809,6 +811,174 @@ static void _ui_drawRichMain(ui_state_t *ui_state, bool mem);
 #endif
 
 #ifdef CONFIG_TETRA
+/* Rows of the groups and radios pages */
+#define HEARD_ROWS 6
+
+/**
+ * Time since a tick: "12s", "5m", "2h".
+ */
+static void _ui_ago(char *buf, size_t len, long long tick)
+{
+    long age = (long)((getTick() - tick) / 1000);
+    if(age < 60)
+        sniprintf(buf, len, "%lds", age);
+    else if(age < 3600)
+        sniprintf(buf, len, "%ldm", age / 60);
+    else
+        sniprintf(buf, len, "%ldh", age / 3600);
+}
+
+/**
+ * Header and rows of a list page; the picked row highlighted, the list
+ * scrolled to keep it in sight.
+ *
+ * @return the y of the detail lines under the list.
+ */
+static int16_t _ui_heardList(ui_state_t *ui_state, const char *title, int n,
+                             void (*row)(int i, char *l, char *m, char *r,
+                                         size_t len))
+{
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = 11;
+    int16_t y = layout.top_h + 3;
+    point_t pos = { layout.horizontal_pad, (int16_t)(y + 8) };
+
+    if(ui_state->tetra_sds_sel >= n && n > 0)
+        ui_state->tetra_sds_sel = n - 1;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "%s %d", title, n);
+    if(n == 0)
+    {
+        pos.y += 2 * step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "None heard yet");
+        return CONFIG_SCREEN_HEIGHT;
+    }
+
+    int first = 0;
+    if(ui_state->tetra_sds_sel >= HEARD_ROWS)
+        first = ui_state->tetra_sds_sel - HEARD_ROWS + 1;
+    for(int i = first; i < n && i < first + HEARD_ROWS; i++)
+    {
+        char l[16], m[16], r[8];
+        row(i, l, m, r, sizeof(l));
+        int16_t ry = y + 3 + step * (i - first + 1);
+        color_t c = color_white;
+        if(i == ui_state->tetra_sds_sel)
+        {
+            gfx_drawRect((point_t){ 0, (int16_t)(ry - 1) },
+                         CONFIG_SCREEN_WIDTH, step, color_white, true);
+            c = color_black;
+        }
+        point_t p = { layout.horizontal_pad, (int16_t)(ry + 8) };
+        gfx_print(p, font, TEXT_ALIGN_LEFT, c, "%s", l);
+        p.x = 66;
+        gfx_print(p, font, TEXT_ALIGN_LEFT, c, "%s", m);
+        p.x = layout.horizontal_pad;
+        gfx_print(p, font, TEXT_ALIGN_RIGHT, c, "%s", r);
+    }
+
+    int16_t dy = y + 3 + step * (HEARD_ROWS + 1) + 2;
+    gfx_drawHLine(dy - 2, 1, color_grey);
+    return dy;
+}
+
+static struct tetraGroup heardGroups[TETRA_HEARD_GROUPS];
+static struct tetraRadio heardRadios[TETRA_HEARD_RADIOS];
+
+static const char *const radioActivity[] = { "call", "talk", "SDS", "reg" };
+
+static void _ui_groupRow(int i, char *l, char *m, char *r, size_t len)
+{
+    const struct tetraGroup *g = &heardGroups[i];
+    sniprintf(l, len, "G %lu", (unsigned long)g->gssi);
+    sniprintf(m, len, "%uc %ut%s", g->calls, g->tx, g->encrypted ? " enc" : "");
+    _ui_ago(r, 8, g->last);
+}
+
+static void _ui_radioRow(int i, char *l, char *m, char *r, size_t len)
+{
+    const struct tetraRadio *rd = &heardRadios[i];
+    sniprintf(l, len, "%lu", (unsigned long)rd->issi);
+    if(rd->lastGroup != 0)
+        sniprintf(m, len, "G%lu", (unsigned long)rd->lastGroup);
+    else
+        sniprintf(m, len, "%s", radioActivity[rd->activity & 3]);
+    _ui_ago(r, 8, rd->last);
+}
+
+/**
+ * TETRA groups page: the groups heard, then the picked one's last talker
+ * and radios.
+ */
+static void _ui_drawTetraGroups(ui_state_t *ui_state)
+{
+    int n = tetraHeard_groups(heardGroups, TETRA_HEARD_GROUPS);
+    int16_t y = _ui_heardList(ui_state, "Groups", n, _ui_groupRow);
+    if(n == 0)
+        return;
+
+    const struct tetraGroup *g = &heardGroups[ui_state->tetra_sds_sel];
+    const fontSize_t font = FONT_SIZE_6PT;
+    point_t pos = { layout.horizontal_pad, (int16_t)(y + 8) };
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "Last %lu, %u radios",
+              (unsigned long)g->lastRadio, g->nradios);
+
+    // The radios, as many as fit on a line
+    char line[48];
+    size_t o = 0;
+    line[0] = '\0';
+    for(int k = 0; k < g->nradios; k++)
+    {
+        char id[12];
+        sniprintf(id, sizeof(id), "%s%lu", k ? " " : "",
+                  (unsigned long)g->radios[k]);
+        if(o + strlen(id) + 1 > sizeof(line))
+            break;
+        strcpy(line + o, id);
+        if(gfx_getTextWidth(font, line)
+           > CONFIG_SCREEN_WIDTH - 2 * layout.horizontal_pad)
+        {
+            line[o] = '\0';
+            break;
+        }
+        o += strlen(id);
+    }
+    pos.y += 11;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "%s", line);
+}
+
+/**
+ * TETRA radios page: the radios heard, then the picked one's activity and
+ * last position.
+ */
+static void _ui_drawTetraRadios(ui_state_t *ui_state)
+{
+    int n = tetraHeard_radios(heardRadios, TETRA_HEARD_RADIOS);
+    int16_t y = _ui_heardList(ui_state, "Radios", n, _ui_radioRow);
+    if(n == 0)
+        return;
+
+    const struct tetraRadio *r = &heardRadios[ui_state->tetra_sds_sel];
+    const fontSize_t font = FONT_SIZE_6PT;
+    point_t pos = { layout.horizontal_pad, (int16_t)(y + 8) };
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "Last %s, %u calls %u SDS",
+              radioActivity[r->activity & 3], r->calls, r->sds);
+    pos.y += 11;
+    if(r->pos)
+    {
+        long la = r->lat, lo = r->lon;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey,
+                  "%s%ld.%05ld %s%ld.%05ld", la < 0 ? "-" : "",
+                  labs(la) / 100000, labs(la) % 100000, lo < 0 ? "-" : "",
+                  labs(lo) / 100000, labs(lo) % 100000);
+    }
+    else
+    {
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "No position");
+    }
+}
+#endif
+
+#ifdef CONFIG_TETRA
 /**
  * TETRA symbol page: the phase of the last symbols on a circle, where a
  * clean signal makes four dots at +-45 and +-135 degrees, and the histogram
@@ -925,6 +1095,12 @@ static bool _ui_drawTetraPage(ui_state_t *ui_state)
             break;
         case TETRA_PAGE_SDS:
             _ui_drawTetraSds(ui_state);
+            break;
+        case TETRA_PAGE_GROUPS:
+            _ui_drawTetraGroups(ui_state);
+            break;
+        case TETRA_PAGE_RADIOS:
+            _ui_drawTetraRadios(ui_state);
             break;
         case TETRA_PAGE_SCOPE:
             _ui_drawTetraScope();

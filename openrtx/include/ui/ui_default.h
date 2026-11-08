@@ -63,6 +63,8 @@ enum tetraPage
     TETRA_PAGE_MAIN = 0,
     TETRA_PAGE_DEBUG,
     TETRA_PAGE_SDS,
+    TETRA_PAGE_GROUPS,
+    TETRA_PAGE_RADIOS,
     TETRA_PAGE_SCOPE,
     TETRA_PAGE_NUM
 };
@@ -256,7 +258,7 @@ typedef struct ui_state_t
 #ifdef CONFIG_TETRA
     // TETRA page on the VFO screen, cycled with *: main, diagnostics, SDS
     uint8_t tetra_page;
-    // SDS page: message shown, 0 the most recent
+    // SDS, groups and radios pages: entry picked, 0 the most recent
     uint8_t tetra_sds_sel;
 #endif
 #ifdef CONFIG_SPECTRUM
