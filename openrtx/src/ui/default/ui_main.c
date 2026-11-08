@@ -1205,11 +1205,13 @@ static uint16_t _ui_richPrint(int16_t x, int16_t y, fontSize_t font,
 static int16_t _ui_richBadge(int16_t x, int16_t y, int16_t h, fontSize_t font,
                              const char *text, color_t color, bool filled)
 {
-    uint16_t w = gfx_getTextWidth(font, text) + 6;
+    uint16_t w = gfx_getTextWidth(font, text) + 8;
     gfx_drawRect((point_t){ x, y }, w, h, color, filled);
-    // Centred, a row higher: the glyphs look low otherwise
-    int16_t ty = y + (h - _ui_richCap(font)) / 2 - 1;
-    _ui_richPrint(x + 3, ty, font, TEXT_ALIGN_LEFT,
+    // Centred; the larger glyphs a row higher, as they look low otherwise
+    int16_t ty = y + (h - _ui_richCap(font)) / 2;
+    if(font >= FONT_SIZE_8PT)
+        ty -= 1;
+    _ui_richPrint(x + 4, ty, font, TEXT_ALIGN_LEFT,
                   filled ? rich_black : color, "%s", text);
     return x + w;
 }
@@ -1289,16 +1291,19 @@ static void _ui_richMeter(int16_t y, color_t accent, bool squelch,
     // S-level, large, on the left, or the squelch level
     uint8_t s = rssiToSlevel(rssi);
     int16_t ty = segY + (segH - _ui_richCap(FONT_SIZE_10PT)) / 2;
+    // Level text, smaller when 10 pt does not fit before the segments
+    char lvl[8];
     if(sqlLabel)
-        _ui_richPrint(RICH_PAD, segY + (segH - _ui_richCap(FONT_SIZE_8PT)) / 2,
-                      FONT_SIZE_8PT, TEXT_ALIGN_LEFT, accent, "SQ%u",
-                      last_state.settings.sqlLevel);
+        sniprintf(lvl, sizeof(lvl), "SQ%u", last_state.settings.sqlLevel);
     else if(s <= 9)
-        _ui_richPrint(RICH_PAD, ty, FONT_SIZE_10PT, TEXT_ALIGN_LEFT, accent,
-                      "S%u", s);
+        sniprintf(lvl, sizeof(lvl), "S%u", s);
     else
-        _ui_richPrint(RICH_PAD, ty, FONT_SIZE_10PT, TEXT_ALIGN_LEFT, accent,
-                      "+%u", (s - 9) * 10);
+        sniprintf(lvl, sizeof(lvl), "+%u", (s - 9) * 10);
+    fontSize_t lf = sqlLabel ? FONT_SIZE_8PT : FONT_SIZE_10PT;
+    if(gfx_getTextWidth(lf, lvl) > x0 - RICH_PAD - 3)
+        lf = FONT_SIZE_8PT;
+    ty = segY + (segH - _ui_richCap(lf)) / 2;
+    _ui_richPrint(RICH_PAD, ty, lf, TEXT_ALIGN_LEFT, accent, "%s", lvl);
 
     int lit = _ui_richMeterPos(rssi);
     for(int i = 0; i < RICH_SEGS; i++)
@@ -1509,18 +1514,31 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
 }
 
 /**
+ * VFO or memory tag at the start of the information line: an outlined
+ * "VFO", or the memory number filled.
+ *
+ * @return the x right after it.
+ */
+static int16_t _ui_richMemTag(int16_t y)
+{
+    char tag[8];
+    bool mem = (last_state.ui_screen == MAIN_MEM);
+    if(mem)
+        sniprintf(tag, sizeof(tag), "M%03u", last_state.channel_index + 1);
+    else
+        sniprintf(tag, sizeof(tag), "VFO");
+    return _ui_richBadge(RICH_PAD, y - 1, 12, FONT_SIZE_6PT, tag,
+                         mem ? yellow_fab413 : rich_grey, mem) + 4;
+}
+
+/**
  * FM and AM: tone and squelch, the frequency, the TX frequency or channel
  * name and the level.
  */
 static void _ui_richAnalog(bool mem)
 {
     const int16_t y = RICH_INFO_Y;
-    if(mem)
-        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
-                      "M%03u", last_state.channel_index + 1);
-    else
-        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
-                      "VFO");
+    int16_t x = _ui_richMemTag(y);
 
     char mid[24] = "";
     if(last_state.channel.mode == OPMODE_FM)
@@ -1540,10 +1558,19 @@ static void _ui_richAnalog(bool mem)
     {
         sniprintf(mid, sizeof(mid), "12.5k");
     }
-    _ui_richPrint(0, y, FONT_SIZE_8PT, TEXT_ALIGN_CENTER, color_white, "%s",
-                  mid);
-    _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT, rich_grey,
-                  "SQ %u", last_state.settings.sqlLevel);
+    uint16_t qw = _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT,
+                                rich_grey, "SQ %u",
+                                last_state.settings.sqlLevel);
+
+    // Tone or bandwidth, centred between the tag and the squelch level
+    int16_t room = CONFIG_SCREEN_WIDTH - RICH_PAD - qw - 4 - x;
+    fontSize_t mf = FONT_SIZE_8PT;
+    if(gfx_getTextWidth(mf, mid) > room)
+        mf = FONT_SIZE_6PT;
+    int16_t mw = gfx_getTextWidth(mf, mid);
+    _ui_richPrint(x + (room - mw) / 2,
+                  y + _ui_richCap(FONT_SIZE_8PT) - _ui_richCap(mf), mf,
+                  TEXT_ALIGN_LEFT, color_white, "%s", mid);
 
     _ui_richFrequency(34);
 
@@ -1572,20 +1599,21 @@ static void _ui_richTetra(void)
     tetra_getStatus(&ts);
     const int16_t y = RICH_INFO_Y;
 
+    int16_t x = _ui_richMemTag(y);
     if(ts.cell)
     {
-        uint16_t w = _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT,
+        uint16_t w = _ui_richPrint(x, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT,
                                    color_white, "%u-%u", ts.mcc, ts.mnc);
         if(ts.sysinfo)
-            _ui_richPrint(RICH_PAD + w + 6, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT,
-                          rich_grey, "LA %u", ts.la);
+            _ui_richPrint(x + w + 4, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                          rich_grey, "LA%u", ts.la);
         if(ts.airEncryption)
             _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT,
                           rich_grey, "AIE");
     }
     else
     {
-        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
+        _ui_richPrint(x, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
                       "Searching");
     }
 
@@ -1697,7 +1725,7 @@ static void _ui_richDmr(void)
 
     // Slot pills: the one of the call shown filled
     int active = slot;
-    int16_t x = RICH_PAD;
+    int16_t x = _ui_richMemTag(y);
     for(int i = 0; i < 2 && !ms; i++)
     {
         char t[4];
@@ -1715,11 +1743,12 @@ static void _ui_richDmr(void)
         cc = s.cc;
     }
     if(!ds.locked)
-        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT, rich_grey,
-                      "Searching");
+        _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
+                      rich_grey, "Searching");
     else if(cc >= 0)
-        _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT, rich_grey,
-                      "%s CC%d", ds.bs ? "RPT" : (ms ? "MS" : "DM"), cc);
+        _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
+                      rich_grey, "%s CC%d", ds.bs ? "RPT" : (ms ? "MS" : "DM"),
+                      cc);
 
     if(slot >= 0)
     {
@@ -1780,8 +1809,9 @@ static void _ui_richM17(ui_state_t *ui_state)
                     : (strnlen(rtx.destination_address, 10) == 0)
                     ? currentLanguage->broadcast : rtx.destination_address;
 
-    _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, color_white,
-                  "#%s", dst);
+    int16_t x = _ui_richMemTag(y);
+    _ui_richPrint(x, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, color_white, "#%s",
+                  dst);
     _ui_richPrint(RICH_PAD, y, FONT_SIZE_8PT, TEXT_ALIGN_RIGHT, rich_grey,
                   "CAN %u", last_state.settings.m17_can);
 
