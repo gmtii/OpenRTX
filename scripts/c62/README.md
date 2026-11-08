@@ -220,6 +220,15 @@ Their traffic would only decode to noise.
   once complete, or after two minutes with the parts received), LIP
   positions, delivery reports. End-to-end encrypted messages are listed
   without their contents. Decoding ported from the ESP32-P4 SDR.
+- **Groups**: the groups heard in clear signalling, most recent first,
+  with their calls (`c`), floor grants (`t`), `enc` if the last call was
+  encrypted, and their age; under the list, the picked group's last
+  talker and the radios seen in it.
+- **Radios**: the radios heard (callers, talkers, SDS senders,
+  registrations), most recent first, with their last group and age;
+  under the list, the picked radio's last activity, its calls and SDS,
+  and its last position from a location report. UP / DOWN pick, ESC goes
+  back, on both pages; they are cleared on a new frequency.
 - **Symbols**: the phase change of the last 256 symbols on a circle
   (four clusters at +-45 and +-135 degrees on a clean signal), and the
   histogram of the raw discriminator values with marks at the four levels
@@ -312,7 +321,9 @@ noise floor and moves only when the floor moves by 6 dB.
 |---|---|
 | **UP** / **DOWN** | Move the marker one point |
 | **0** | Marker to the strongest point |
-| **#** / **\*** | Zoom in / out around the marker (100 kHz to 20 MHz) |
+| **\*** / **#** | Zoom in / out around the marker (100 kHz to 20 MHz) |
+| **P1** / **P2** | The next span down / up, side by side with this one |
+| **5** | Type a centre frequency, `___.____` MHz: ENTER sweeps around it, ESC cancels |
 | **ENTER** | Centre the view on the marker |
 | **PTT** | Tune the VFO to the marker and go back to it |
 | **ESC** | Go back to the VFO, unchanged |
