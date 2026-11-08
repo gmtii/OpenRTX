@@ -1910,16 +1910,23 @@ static void _ui_richTetra(void)
 
     _ui_richFrequency(33);
 
-    // Signal quality from the demodulator's phase error: 58% is noise
+    // Signal quality from the demodulator's phase error: 58% is noise.
+    // Fixed places, so that the line does not move with the digits.
     const int16_t qy = 57;
-    uint16_t lw = _ui_richPrint(RICH_PAD, qy, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
-                                rich_grey, "Sig");
-    char fig[16];
-    sniprintf(fig, sizeof(fig), "e%u%% %+dHz", ts.phaseErr, ts.carrierHz);
-    uint16_t fw = _ui_richPrint(RICH_PAD, qy, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
-                                color_white, "%s", fig);
-    int16_t bx = RICH_PAD + lw + 4;
-    int16_t bw = CONFIG_SCREEN_WIDTH - RICH_PAD - fw - 4 - bx;
+    const int16_t ex = 72; // Phase error: room for "e58%" and "+9999Hz"
+    _ui_richPrint(RICH_PAD, qy, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                  "Sig");
+    _ui_richPrint(ex, qy, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, color_white, "e%u%%",
+                  ts.phaseErr);
+    int hz = ts.carrierHz;
+    if(hz > 9999)
+        hz = 9999;
+    if(hz < -9999)
+        hz = -9999;
+    _ui_richPrint(RICH_PAD, qy, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, color_white,
+                  "%+dHz", hz);
+    const int16_t bx = RICH_PAD + 22;
+    const int16_t bw = ex - 4 - bx;
     int q = ((58 - (int)ts.phaseErr) * 100) / 48;
     if(q < 0)
         q = 0;
