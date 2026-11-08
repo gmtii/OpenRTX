@@ -1426,6 +1426,19 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
         _ui_spectrumEnter(sync_rtx);
 #endif
 
+#ifdef CONFIG_UI_FLASHLIGHT
+    // Flashlight on and off
+    if(msg.keys & KEY_STAR)
+    {
+        static bool light;
+        light = !light;
+        if(light)
+            platform_ledOn(WHITE);
+        else
+            platform_ledOff(WHITE);
+    }
+#endif
+
 #if defined(PLATFORM_TTWRPLUS)
     if(msg.keys & KEY_VOLDOWN)
 #else
