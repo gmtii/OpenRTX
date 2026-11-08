@@ -9,6 +9,7 @@
 #include <string.h>
 #include <tetra/tetra.h>
 #include "interfaces/delays.h"
+#include "protocols/TETRA/TetraCell.h"
 #include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
@@ -242,6 +243,7 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
 
         case TETRA_EV_CELL: {
             const struct tetra_cell *c = ev->u.cell;
+            tetraCell_onCell(c);
             status.cell = true;
             status.mcc = c->mcc;
             status.mnc = c->mnc;
@@ -282,6 +284,10 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
             tetraHeard_mm(ev->u.mm);
             break;
 
+        case TETRA_EV_NETWORK:
+            tetraCell_onNetwork(ev->u.network);
+            break;
+
         default:
             break;
     }
@@ -296,6 +302,7 @@ void tetraStatus_reset(void)
     pthread_mutex_unlock(&statusMutex);
     tetraSds_reset();
     tetraHeard_reset();
+    tetraCell_reset();
 }
 
 void tetraStatus_lostSync(bool overrun)

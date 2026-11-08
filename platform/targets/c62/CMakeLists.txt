@@ -124,6 +124,7 @@ if(C62_TETRA)
   target_link_libraries(app PRIVATE tetra)
   target_sources(app PRIVATE
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraDemod.c
+    ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraCell.c
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraHeard.c
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraSds.c
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraStatus.c
