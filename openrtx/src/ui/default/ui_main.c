@@ -1268,18 +1268,34 @@ void _ui_drawSpectrum(ui_state_t *ui_state)
 
     gfx_clearScreen();
 
-    // Range: first and last frequency, span in the middle
+    // Range: first and last frequency, span in the middle; or the centre
+    // frequency being typed
     int16_t y = fh + 1;
-    _ui_spectrumFreq(buf, sizeof(buf), start, step);
-    gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_LEFT, color_white, buf);
-    _ui_spectrumFreq(buf, sizeof(buf), end, step);
-    gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_RIGHT, color_white, buf);
-    freq_t span = step * SPECTRUM_POINTS;
-    if (span >= 1000000)
-        snprintf(buf, sizeof(buf), "%luM", (unsigned long)(span / 1000000));
-    else
-        snprintf(buf, sizeof(buf), "%luk", (unsigned long)(span / 1000));
-    gfx_print((point_t){ 0, y }, font, TEXT_ALIGN_CENTER, yellow_fab413, buf);
+    if (ui_state->spec_input) {
+        char typed[9] = "___.____";
+        for (int i = 0, k = 0; i < ui_state->spec_digits; i++, k++) {
+            if (k == 3)
+                k++; /* Skip the point */
+            typed[k] = ui_state->spec_input_buf[i];
+        }
+        gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_LEFT, yellow_fab413,
+                  "Centre %s MHz", typed);
+    } else {
+        _ui_spectrumFreq(buf, sizeof(buf), start, step);
+        gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_LEFT, color_white,
+                  buf);
+        _ui_spectrumFreq(buf, sizeof(buf), end, step);
+        gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_RIGHT, color_white,
+                  buf);
+        freq_t span = step * SPECTRUM_POINTS;
+        if (span >= 1000000)
+            snprintf(buf, sizeof(buf), "%luM",
+                     (unsigned long)(span / 1000000));
+        else
+            snprintf(buf, sizeof(buf), "%luk", (unsigned long)(span / 1000));
+        gfx_print((point_t){ 0, y }, font, TEXT_ALIGN_CENTER, yellow_fab413,
+                  buf);
+    }
 
     // Graph area
     const int16_t top = y + 3;
@@ -1326,7 +1342,8 @@ void _ui_drawSpectrum(ui_state_t *ui_state)
     // Keys
     y += fh + 2;
     gfx_print((point_t){ 0, y }, font, TEXT_ALIGN_CENTER, color_grey,
-              "PTT:VFO 0:peak *#:zoom");
+              ui_state->spec_input ? "ENTER:go ESC:cancel"
+                                   : "PTT:VFO 0:pk *+ #- 5:f");
 }
 #endif
 

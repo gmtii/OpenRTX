@@ -971,6 +971,7 @@ static void _ui_spectrumEnter(bool *sync_rtx)
     state.txDisable = true;
     *sync_rtx = true;
     ui_state.spec_span = SPECTRUM_DEFAULT_SPAN;
+    ui_state.spec_input = false;
     _ui_spectrumSweep(state.channel.rx_frequency);
     state.ui_screen = SPECTRUM;
 }
@@ -995,8 +996,51 @@ static void _ui_spectrumExit(bool tune, bool *sync_rtx)
     state.ui_screen = MAIN_VFO;
 }
 
+/**
+ * Typing a centre frequency: MHz and four decimals, "___.____".
+ */
+static void _ui_fsm_spectrumInput(kbd_msg_t msg)
+{
+    if(msg.keys & KEY_ESC)
+    {
+        ui_state.spec_input = false;
+    }
+    else if(msg.keys & KEY_ENTER)
+    {
+        // Missing digits are zeros
+        freq_t mhz = 0, frac = 0;
+        for(int i = 0; i < 7; i++)
+        {
+            int d = (i < ui_state.spec_digits)
+                  ? ui_state.spec_input_buf[i] - '0' : 0;
+            if(i < 3)
+                mhz = mhz * 10 + d;
+            else
+                frac = frac * 10 + d;
+        }
+        freq_t freq = mhz * 1000000 + frac * 100;
+        if(_ui_freq_check_limits(freq))
+            _ui_spectrumSweep(freq);
+        ui_state.spec_input = false;
+    }
+    else if(input_isNumberPressed(msg) && ui_state.spec_digits < 7)
+    {
+        ui_state.spec_input_buf[ui_state.spec_digits++] =
+            '0' + input_getPressedNumber(msg);
+        ui_state.spec_input_buf[ui_state.spec_digits] = '\0';
+        if(ui_state.spec_digits == 7)
+            _ui_fsm_spectrumInput((kbd_msg_t){ .keys = KEY_ENTER });
+    }
+}
+
 static void _ui_fsm_spectrum(kbd_msg_t msg, bool *sync_rtx)
 {
+    if(ui_state.spec_input)
+    {
+        _ui_fsm_spectrumInput(msg);
+        return;
+    }
+
     if(msg.keys & KEY_ESC)
     {
         _ui_spectrumExit(false, sync_rtx);
@@ -1019,19 +1063,37 @@ static void _ui_fsm_spectrum(kbd_msg_t msg, bool *sync_rtx)
     {
         _ui_spectrumSweep(_ui_spectrumMarker());
     }
-    else if(msg.keys & KEY_HASH)
+    else if(msg.keys & KEY_STAR)
     {
         // Zoom in around the marker
         if(ui_state.spec_span > 0)
             ui_state.spec_span--;
         _ui_spectrumSweep(_ui_spectrumMarker());
     }
-    else if(msg.keys & KEY_STAR)
+    else if(msg.keys & KEY_HASH)
     {
         // Zoom out
         if(ui_state.spec_span < ARRAY_SIZE(spectrum_spans) - 1)
             ui_state.spec_span++;
         _ui_spectrumSweep(_ui_spectrumMarker());
+    }
+    else if(msg.keys & (KEY_F1 | KEY_F2))
+    {
+        // P1 / P2: the next span down or up, side by side with this one
+        freq_t span = spectrum_spans[ui_state.spec_span];
+        freq_t center = ui_state.spec_start + span / 2;
+        if(msg.keys & KEY_F2)
+            center += span;
+        else if(center > span)
+            center -= span;
+        _ui_spectrumSweep(center);
+    }
+    else if(msg.keys & KEY_5)
+    {
+        // Type a new centre frequency
+        ui_state.spec_input = true;
+        ui_state.spec_digits = 0;
+        ui_state.spec_input_buf[0] = '\0';
     }
 }
 #endif

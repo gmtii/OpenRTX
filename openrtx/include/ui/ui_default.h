@@ -268,6 +268,10 @@ typedef struct ui_state_t
     uint8_t spec_span;
     uint8_t spec_marker;
     uint32_t spec_sweeps;
+    // Centre frequency being typed (5 opens it): digits so far
+    bool spec_input;
+    uint8_t spec_digits;
+    char spec_input_buf[8];
 #endif
 }
 ui_state_t;
