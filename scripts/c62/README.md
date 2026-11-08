@@ -340,4 +340,27 @@ NVM: saved VFO 145500000 Hz mode 5 (0), settings (0)
 ```
 
 A firmware whose settings or channel structure differs starts from the
-defaults. There are no channel memories yet.
+defaults.
+
+## 11. Channel memories
+
+**P2** on the VFO screen saves the VFO in a memory: a list of the
+memories opens, with a new one at the end, picked by default.
+
+| Key | Action |
+|---|---|
+| **UP** / **DOWN** | Pick a memory to overwrite, or the new one |
+| **ENTER** | Save the VFO there, named after its mode and frequency (`T 390.2125`) |
+| **#** twice | Delete the memory picked: the next ones move up |
+| **ESC** / **P2** | Back to the VFO |
+
+The red key (ESC) on the VFO screen switches to the memories, UP and DOWN
+go through them, and the menu's Channels list them. A memory holds the
+whole channel: mode, RX and TX frequencies, power, bandwidth and tones.
+The main screen starts its information line with `VFO`, or with the
+memory number (`M001`) in yellow.
+
+Up to 128 memories live after the saved settings in the OpenRTX storage
+partition (0x2b4000, 16 kB); each carries a magic and a CRC. Saving or
+deleting erases and writes 4 kB flash sectors with interrupts off: the
+audio may stutter for a moment.
