@@ -200,36 +200,54 @@ audio, with its built-in TETRA codebooks (EN 300 395-2). The speaker is
 released after one second without speech. `-DC62_TETRA_SPEECH=OFF` builds
 without it.
 
+The network time the cell broadcasts keeps running on the radio's tick
+once received, also outside TETRA: the receive-only modes show it on the
+top bar of the main screen in place of `RX only`. It is lost at power
+off.
+
 Only calls whose signalling was received in clear are played, as on the
 ESP32-P4 SDR: end-to-end encrypted calls (flagged in their setup) show
 `Encrypted`. Air-encrypted calls, whose signalling cannot be read, and
 calls set up before the radio tuned in show `Encrypted?` and stay silent.
 Their traffic would only decode to noise.
 
-**\*** on the VFO screen cycles the TETRA pages:
+**\*** on the VFO or memory screen cycles the TETRA pages; on a page, a
+number goes straight to another (shown on the top bar, `3/8`), **0** back
+to the main one:
 
 - **Main**: the cell, the call, the last SDS text or status on line 1.
-- **Diagnostics**: sync, phase error (10-20 % is a clean signal, 58 % is
+- **Diagnostics** (1): sync, phase error (10-20 % is a clean signal, 58 % is
   noise), carrier offset, lost sample blocks (`o`) and resyncs (`r`), the
   cell, the last call signalled (usage marker, timeslots) and the last
   traffic slot, the traffic not played and why (unknown call, encrypted,
   data), and the speech frames queued, bad and played. No PC needed.
-- **SDS**: the last 10 short data messages, newest first; **UP** / **DOWN**
+- **SDS** (2): the last 10 short data messages, newest first; **UP** / **DOWN**
   browse them, **ESC** goes back. Status, text (simple, immediate, SDS-TL,
   with user data header), concatenated messages (UDH and SDS-TL, shown
   once complete, or after two minutes with the parts received), LIP
   positions, delivery reports. End-to-end encrypted messages are listed
   without their contents. Decoding ported from the ESP32-P4 SDR.
-- **Groups**: the groups heard in clear signalling, most recent first,
+- **Groups** (3): the groups heard in clear signalling, most recent first,
   with their calls (`c`), floor grants (`t`), `enc` if the last call was
   encrypted, and their age; under the list, the picked group's last
   talker and the radios seen in it.
-- **Radios**: the radios heard (callers, talkers, SDS senders,
+- **Radios** (4): the radios heard (callers, talkers, SDS senders,
   registrations), most recent first, with their last group and age;
   under the list, the picked radio's last activity, its calls and SDS,
   and its last position from a location report. UP / DOWN pick, ESC goes
   back, on both pages; they are cleared on a new frequency.
-- **Symbols**: the phase change of the last 256 symbols on a circle
+- **Calls** (5): the calls heard in clear signalling, most recent first,
+  with their called party (`G` group, `I` individual), last talker and
+  age, `now` while active; under the list, the picked call's state,
+  length, encryption and talkers.
+- **Cell** (6): network, colour code, location area, downlink and uplink,
+  carrier, band, offset and duplex, services, air encryption, load,
+  system code and sharing, hyperframe and CCK, and the network date and
+  time.
+- **Neighbours** (7): the cells the serving one announces, by frequency,
+  with their load (`lo`, `med`, `hi`), `S` if synchronised, and their
+  network or location area when not the serving cell's.
+- **Symbols** (8): the phase change of the last 256 symbols on a circle
   (four clusters at +-45 and +-135 degrees on a clean signal), and the
   histogram of the raw discriminator values with marks at the four levels
   the demodulator expects. Marks off the peaks mean a wrong offset or
@@ -375,3 +393,7 @@ Up to 128 memories live after the saved settings in the OpenRTX storage
 partition (0x2b4000, 16 kB); each carries a magic and a CRC. Saving or
 deleting erases and writes 4 kB flash sectors with interrupts off: the
 audio may stutter for a moment.
+
+## 12. Flashlight
+
+**MONI + \*** turns the white flashlight LED on and off.
