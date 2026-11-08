@@ -20,9 +20,77 @@
 /* Group and individual addresses from 0xfffffc on are special */
 #define SSI_SPECIAL 0xfffffcu
 
+/*
+ * The tables in PSRAM on the C62: rarely touched, and cleared by
+ * tetraHeard_reset() when the TETRA mode starts (PSRAM is not zeroed).
+ */
+#ifdef PLATFORM_C62
+#define HEARD_BSS __attribute__((section(".psram_section")))
+#else
+#define HEARD_BSS
+#endif
+
 static pthread_mutex_t heardMutex = PTHREAD_MUTEX_INITIALIZER;
-static struct tetraRadio radios[TETRA_HEARD_RADIOS]; /* Under heardMutex */
-static struct tetraGroup groups[TETRA_HEARD_GROUPS];
+/* Under heardMutex */
+static HEARD_BSS struct tetraRadio radios[TETRA_HEARD_RADIOS];
+static HEARD_BSS struct tetraGroup groups[TETRA_HEARD_GROUPS];
+static HEARD_BSS struct tetraCallInfo calls[TETRA_HEARD_CALLS];
+
+/**
+ * Record call signalling in the call log. Under heardMutex.
+ */
+static void callLog(const struct tetra_call *c, long long now)
+{
+    if (c->call_id == 0)
+        return;
+
+    struct tetraCallInfo *e = NULL, *spare = NULL;
+    for (int i = 0; i < TETRA_HEARD_CALLS && e == NULL; i++) {
+        struct tetraCallInfo *k = &calls[i];
+        if (k->start != 0 && k->id == c->call_id
+            && (k->active || c->what == TETRA_CALL_RELEASE))
+            e = k;
+        else if (spare == NULL || k->start == 0
+                 || (spare->start != 0 && k->last < spare->last))
+            spare = k;
+    }
+
+    if (c->what == TETRA_CALL_RELEASE) {
+        if (e != NULL) {
+            e->active = false;
+            e->last = now;
+        }
+        return;
+    }
+
+    if (e == NULL) {
+        e = spare;
+        memset(e, 0, sizeof(*e));
+        e->id = c->call_id;
+        e->start = now;
+        e->active = true;
+    }
+    e->last = now;
+    if (c->dst_ssi != 0) {
+        e->dst = c->dst_ssi;
+        e->group = c->group;
+    }
+    e->encrypted |= c->encrypted;
+    if (c->src_ssi != 0 && c->src_ssi < SSI_SPECIAL) {
+        e->talker = c->src_ssi;
+        bool known = false;
+        for (int i = 0; i < e->ntalkers; i++)
+            known |= (e->talkers[i] == c->src_ssi);
+        if (!known) {
+            if (e->ntalkers == TETRA_CALL_TALKERS) {
+                memmove(&e->talkers[0], &e->talkers[1],
+                        sizeof(e->talkers) - sizeof(e->talkers[0]));
+                e->ntalkers--;
+            }
+            e->talkers[e->ntalkers++] = c->src_ssi;
+        }
+    }
+}
 
 /**
  * The entry of a radio, a new one if needed: a free one, else the one
@@ -101,11 +169,16 @@ void tetraHeard_reset(void)
     pthread_mutex_lock(&heardMutex);
     memset(radios, 0, sizeof(radios));
     memset(groups, 0, sizeof(groups));
+    memset(calls, 0, sizeof(calls));
     pthread_mutex_unlock(&heardMutex);
 }
 
 void tetraHeard_call(const struct tetra_call *c)
 {
+    pthread_mutex_lock(&heardMutex);
+    callLog(c, getTick());
+    pthread_mutex_unlock(&heardMutex);
+
     bool setup = (c->what == TETRA_CALL_SETUP);
     bool grant = (c->what == TETRA_CALL_TX_GRANTED);
     if (!setup && !grant && c->what != TETRA_CALL_INFO)
@@ -195,6 +268,27 @@ int tetraHeard_radios(struct tetraRadio *out, int max)
     /* Most recent first */
     for (int i = 1; i < n; i++) {
         struct tetraRadio e = out[i];
+        int j = i;
+        for (; j > 0 && out[j - 1].last < e.last; j--)
+            out[j] = out[j - 1];
+        out[j] = e;
+    }
+    return n;
+}
+
+int tetraHeard_calls(struct tetraCallInfo *out, int max)
+{
+    int n = 0;
+    pthread_mutex_lock(&heardMutex);
+    for (int i = 0; i < TETRA_HEARD_CALLS && n < max; i++) {
+        if (calls[i].start != 0)
+            out[n++] = calls[i];
+    }
+    pthread_mutex_unlock(&heardMutex);
+
+    /* Most recent first */
+    for (int i = 1; i < n; i++) {
+        struct tetraCallInfo e = out[i];
         int j = i;
         for (; j > 0 && out[j - 1].last < e.last; j--)
             out[j] = out[j - 1];

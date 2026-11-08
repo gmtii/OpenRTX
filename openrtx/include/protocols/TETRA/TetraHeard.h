@@ -24,6 +24,8 @@ extern "C" {
 #define TETRA_HEARD_RADIOS 32
 #define TETRA_HEARD_GROUPS 32
 #define TETRA_GROUP_RADIOS 8 /**< Distinct radios kept per group */
+#define TETRA_HEARD_CALLS 16
+#define TETRA_CALL_TALKERS 4 /**< Distinct talkers kept per call */
 
 /** Last thing a radio was seen doing */
 enum tetraRadioActivity {
@@ -58,6 +60,19 @@ struct tetraGroup {
     bool encrypted;     /**< Last call encrypted */
 };
 
+struct tetraCallInfo {
+    uint16_t id;      /**< Call identifier */
+    uint32_t dst;     /**< Called group or radio, 0 unknown */
+    bool group;
+    uint32_t talker;  /**< Last talking party, 0 unknown */
+    uint8_t ntalkers; /**< Entries in talkers[] */
+    uint32_t talkers[TETRA_CALL_TALKERS];
+    long long start;  /**< Tick of its first signalling */
+    long long last;   /**< Tick of its last signalling */
+    bool active;      /**< Not released yet */
+    bool encrypted;
+};
+
 struct tetra_call;
 struct tetra_mm;
 struct tetraSds;
@@ -88,6 +103,13 @@ void tetraHeard_mm(const struct tetra_mm *mm);
  * @return number of entries copied.
  */
 int tetraHeard_radios(struct tetraRadio *out, int max);
+
+/**
+ * Copy the calls heard, most recent first.
+ *
+ * @return number of entries copied.
+ */
+int tetraHeard_calls(struct tetraCallInfo *out, int max);
 
 /**
  * Copy the groups heard, most recent first.
