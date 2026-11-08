@@ -1117,6 +1117,50 @@ static void _ui_fsm_channelSave(kbd_msg_t msg)
 }
 #endif
 
+#ifdef CONFIG_TETRA
+/**
+ * TETRA pages of the VFO and memory screens: * cycles them, UP/DOWN browse
+ * the SDS page and ESC leaves it.
+ *
+ * @return true if the key was taken.
+ */
+static bool _ui_fsm_tetraPages(kbd_msg_t msg)
+{
+    if(state.channel.mode != OPMODE_TETRA)
+        return false;
+
+    if(msg.keys & KEY_STAR)
+    {
+        // Next TETRA page: main, diagnostics, SDS, symbols
+        ui_state.tetra_page = (ui_state.tetra_page + 1) % TETRA_PAGE_NUM;
+        ui_state.tetra_sds_sel = 0;
+        return true;
+    }
+
+    if(ui_state.tetra_page != TETRA_PAGE_SDS)
+        return false;
+
+    if(msg.keys & (KEY_UP | KNOB_RIGHT))
+    {
+        if(ui_state.tetra_sds_sel > 0)
+            ui_state.tetra_sds_sel--;
+        return true;
+    }
+    if(msg.keys & (KEY_DOWN | KNOB_LEFT))
+    {
+        if(ui_state.tetra_sds_sel + 1 < TETRA_SDS_MAX)
+            ui_state.tetra_sds_sel++;
+        return true;
+    }
+    if(msg.keys & KEY_ESC)
+    {
+        ui_state.tetra_page = TETRA_PAGE_MAIN;
+        return true;
+    }
+    return false;
+}
+#endif
+
 static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
 {
     // If there is no keyboard left and right select the menu entry to edit
@@ -1791,22 +1835,9 @@ void ui_updateFSM(bool *sync_rtx)
                 else
                 {
 #ifdef CONFIG_TETRA
-                    // SDS page: UP/DOWN browse the messages, ESC leaves it
-                    bool sdsPage = (state.channel.mode == OPMODE_TETRA)
-                                && (ui_state.tetra_page == TETRA_PAGE_SDS);
-                    if(sdsPage && (msg.keys & (KEY_UP | KNOB_RIGHT)))
+                    // TETRA pages: *, and the SDS page's keys
+                    if(_ui_fsm_tetraPages(msg))
                     {
-                        if(ui_state.tetra_sds_sel > 0)
-                            ui_state.tetra_sds_sel--;
-                    }
-                    else if(sdsPage && (msg.keys & (KEY_DOWN | KNOB_LEFT)))
-                    {
-                        if(ui_state.tetra_sds_sel + 1 < TETRA_SDS_MAX)
-                            ui_state.tetra_sds_sel++;
-                    }
-                    else if(sdsPage && (msg.keys & KEY_ESC))
-                    {
-                        ui_state.tetra_page = TETRA_PAGE_MAIN;
                     }
                     else
 #endif
@@ -1907,16 +1938,6 @@ void ui_updateFSM(bool *sync_rtx)
                             ui_state.menu_selected = SAVE_MAX_CHANNELS - 1;
                         ui_state.save_delete_armed = false;
                         state.ui_screen = CHANNEL_SAVE;
-                    }
-#endif
-#ifdef CONFIG_TETRA
-                    else if((msg.keys & KEY_STAR)
-                            && (state.channel.mode == OPMODE_TETRA))
-                    {
-                        // Next TETRA page: main, diagnostics, SDS
-                        ui_state.tetra_page = (ui_state.tetra_page + 1)
-                                            % TETRA_PAGE_NUM;
-                        ui_state.tetra_sds_sel = 0;
                     }
 #endif
                     else if(input_isNumberPressed(msg))
@@ -2049,6 +2070,13 @@ void ui_updateFSM(bool *sync_rtx)
                 }
                 else
                 {
+#ifdef CONFIG_TETRA
+                    // TETRA pages: *, and the SDS page's keys
+                    if(_ui_fsm_tetraPages(msg))
+                    {
+                    }
+                    else
+#endif
                     if(msg.keys & KEY_ENTER)
                     {
                         // Save current main state

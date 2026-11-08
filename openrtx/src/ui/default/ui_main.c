@@ -905,46 +905,52 @@ static void _ui_drawTetraScope(void)
 }
 #endif
 
+#ifdef CONFIG_TETRA
+/**
+ * The TETRA page shown in place of the VFO or memory screen, if any.
+ *
+ * @return true if one was drawn.
+ */
+static bool _ui_drawTetraPage(ui_state_t *ui_state)
+{
+    if((last_state.channel.mode != OPMODE_TETRA)
+       || (ui_state->tetra_page == TETRA_PAGE_MAIN))
+        return false;
+
+    _ui_drawMainTop(ui_state);
+    switch(ui_state->tetra_page)
+    {
+        case TETRA_PAGE_DEBUG:
+            _ui_drawTetraDebug();
+            break;
+        case TETRA_PAGE_SDS:
+            _ui_drawTetraSds(ui_state);
+            break;
+        case TETRA_PAGE_SCOPE:
+            _ui_drawTetraScope();
+            break;
+        default:
+            break;
+    }
+    return true;
+}
+#endif
+
 void _ui_drawMainVFO(ui_state_t* ui_state)
 {
     gfx_clearScreen();
 
-    #ifdef CONFIG_UI_RICH_MAIN
     #ifdef CONFIG_TETRA
-    bool tetraPage = (last_state.channel.mode == OPMODE_TETRA)
-                  && (ui_state->tetra_page != TETRA_PAGE_MAIN);
-    #else
-    bool tetraPage = false;
-    #endif
-    if(!tetraPage)
-    {
-        _ui_drawRichMain(ui_state, false);
+    if(_ui_drawTetraPage(ui_state))
         return;
-    }
+    #endif
+
+    #ifdef CONFIG_UI_RICH_MAIN
+    _ui_drawRichMain(ui_state, false);
+    return;
     #endif
 
     _ui_drawMainTop(ui_state);
-
-    #ifdef CONFIG_TETRA
-    if(last_state.channel.mode == OPMODE_TETRA)
-    {
-        if(ui_state->tetra_page == TETRA_PAGE_DEBUG)
-        {
-            _ui_drawTetraDebug();
-            return;
-        }
-        if(ui_state->tetra_page == TETRA_PAGE_SDS)
-        {
-            _ui_drawTetraSds(ui_state);
-            return;
-        }
-        if(ui_state->tetra_page == TETRA_PAGE_SCOPE)
-        {
-            _ui_drawTetraScope();
-            return;
-        }
-    }
-    #endif
     _ui_drawModeInfo(ui_state);
 
     // Show VFO frequency unless the mode shows a call (M17 LSF, TETRA call)
@@ -974,6 +980,11 @@ void _ui_drawMainVFOInput(ui_state_t* ui_state)
 void _ui_drawMainMEM(ui_state_t* ui_state)
 {
     gfx_clearScreen();
+
+    #ifdef CONFIG_TETRA
+    if(_ui_drawTetraPage(ui_state))
+        return;
+    #endif
 
     #ifdef CONFIG_UI_RICH_MAIN
     _ui_drawRichMain(ui_state, true);
