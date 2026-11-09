@@ -449,8 +449,9 @@ and 27 (long range); names, call signs, ship types, dimensions and
 destinations from 5, 19, 21 and 24. Positions marked not available are
 not shown.
 
-The main screen shows the stations, the reports received and the frames
-dropped on a bad CRC (`rx 24 bad 10`, or `24/10` when long), and the
+The main screen shows the stations, the reports received, those of them
+repaired and the frames dropped on a bad CRC (`rx 24 fix 3 bad 7`, or
+`24/3/7` when long), and the
 newest station: its name (or MMSI until a static report names it), class
 and age, then its position, speed, course, navigational status and
 destination scrolling. The green LED flashes for each report and the
@@ -463,7 +464,15 @@ The receiver takes the centre and amplitude of the signal from its
 highest and lowest levels over the last 13 bits, so a carrier offset or a
 burst starting after noise settles within a few bits; three slicers with
 different hysteresis, each with its own bit clock, decode every burst and
-the first valid frame counts.
+the first valid frame counts. The bit clock follows the transitions
+quickly while searching and slowly within a frame, so that noise does not
+make it slip a bit. A frame failing its CRC, or cut short by a false flag
+(one level wrong is two bits wrong after NRZI, and can fake a flag), is
+repaired: its 20 least sure levels are flipped, alone and in pairs, and
+the bits read up to each known message length until the CRC is good and
+the length fits the message type. On the host test bench this decodes
+about twice as many noisy frames as before, with no false frame from
+noise.
 
 The Flipper Zero test files of the
 [UV-K1/K5 custom firmware](https://github.com/armel/uv-k1-k5v3-firmware-custom/tree/main/App/apps/aisrx/test)
