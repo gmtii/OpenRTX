@@ -58,6 +58,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
 | `C62_ACARS` | `ON` | ACARS receive mode "ACARS" (section 13) |
 | `C62_AIS` | `ON` | AIS receive mode "AIS" (section 14) |
+| `C62_FM_BROADCAST` | `ON` | Broadcast FM radio on the BK1080, MONI + # (section 15) |
 | `C62_SPECTRUM` | `ON` | Spectrum view, MONI + 0 on the VFO screen (section 9) |
 | `C62_RICH_UI` | `ON` | Main screen with a mode badge, the receiver state (RX, TX, SYNC, LOCK), call cards and a segmented S-meter, also in the macro menu (squelch level and threshold in FM and AM); macro keys 7 and 8 set the frequency step instead of the brightness. `OFF` keeps the default OpenRTX screen and macro menu |
 | `C62_REG43_SWEEP` | `OFF` | Cycle `REG_43` through 7 test values in M17 RX |
@@ -479,3 +480,32 @@ The Flipper Zero test files of the
 (2-FSK on 433.650 MHz) decode with the radio in AIS mode on 433.650 MHz:
 all of them but `ais_badcrc.sub`, which counts as `bad`. `ais_inland.sub`
 (message 8, Inland AIS) only adds a report to its MMSI.
+
+## 15. FM radio
+
+The C62 has a BK1080 broadcast FM receiver whose audio goes to the
+speaker amplifier directly. On the VFO or memory screen, **MONI + #**
+opens the FM radio: the operating mode is suspended (no audio from the
+main receiver, no transmission) and the BK1080 plays, the speaker held on
+whatever the beeps and voice prompts do. **ESC** goes back to the mode
+as it was. The screen may go off meanwhile: the radio keeps playing. The
+station and volume are kept until the radio is turned off, 100.1 MHz and
+10 at first.
+
+| Key | Action |
+|---|---|
+| **UP** / **DOWN** | ±100 kHz, around the 87.5-108 MHz band |
+| **P1** / **P2** | Seek the next station down / up |
+| **\*** / **#** | Volume down / up, 0-15 (the BK1080's own) |
+| **0-9** | Type a frequency in tenths of MHz (`1001` is 100.1, `875` is 87.5): ENTER tunes, ESC cancels |
+| **ESC** | Back to the VFO or memory screen |
+
+A seek stops on a station as the UV-K5 firmware does: SNR above 2, RSSI
+10 or more, the AFC not railed and the frequency error near zero; or
+after a whole turn of the band. The screen shows the frequency, the
+state (`Station`, `No station`, `Seeking up/down`), a signal bar and the
+chip's RSSI and SNR.
+
+Bus traffic near the audio path is heard as clicks: the BK1080 is read
+once a second, and the screen redraws at once only for a new frequency,
+station state or seek, the signal figures at most every 3 s.
