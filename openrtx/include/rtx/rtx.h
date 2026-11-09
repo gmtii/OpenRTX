@@ -167,6 +167,43 @@ void rtx_spectrumStop();
  */
 uint32_t rtx_spectrumRead(rssi_t *rssi);
 
+/**
+ * Broadcast FM receiver state, see rtx_broadcastRead().
+ */
+struct rtxBroadcast {
+    freq_t freq;   /**< Tuned, in Hz (moves while seeking) */
+    uint8_t rssi;  /**< Chip units, 0 to 255 */
+    uint8_t snr;   /**< Chip units, 0 to 15 */
+    bool station;  /**< A station is tuned */
+    int8_t seek;   /**< Seeking up (1), down (-1), or not (0) */
+};
+
+/**
+ * Play broadcast FM in place of the current operating mode, which is
+ * suspended, or retune or change the volume. Thread-safe. Only on radios
+ * with a broadcast receiver (CONFIG_FM_BROADCAST).
+ *
+ * @param freq: frequency in Hz, 87.5 to 108 MHz.
+ * @param volume: 0 to 15.
+ */
+void rtx_broadcastStart(freq_t freq, uint8_t volume);
+
+/**
+ * Seek the next station up (1) or down (-1) from the current frequency,
+ * wrapping around the band; 0 stops a seek.
+ */
+void rtx_broadcastSeek(int8_t dir);
+
+/**
+ * Stop broadcast FM and resume the current operating mode.
+ */
+void rtx_broadcastStop();
+
+/**
+ * Get the broadcast receiver state. Thread-safe.
+ */
+void rtx_broadcastRead(struct rtxBroadcast *out);
+
 #ifdef __cplusplus
 }
 #endif

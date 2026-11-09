@@ -25,6 +25,9 @@
 #ifdef CONFIG_AIS
 #include "rtx/OpMode_AIS.hpp"
 #endif
+#ifdef CONFIG_FM_BROADCAST
+#include "interfaces/delays.h"
+#endif
 
 static pthread_mutex_t   *cfgMutex;     // Mutex for incoming config messages
 static const rtxStatus_t *newCnf;       // Pointer for incoming config messages
@@ -240,12 +243,164 @@ static bool spectrumTask()
 }
 #endif
 
+#ifdef CONFIG_FM_BROADCAST
+/*
+ * Broadcast FM. The request and the receiver state are shared with the UI
+ * under cfgMutex; the receiver is driven from the RTX thread.
+ */
+#define BC_LOW  87500000
+#define BC_HIGH 108000000
+#define BC_STEP 100000
+
+static bool    bcWanted;                // Requested by the UI
+static freq_t  bcFreq;                  // Wanted, then tuned while seeking
+static uint8_t bcVolume;
+static int8_t  bcSeek;                  // Seek direction, 0 none
+static bool    bcRunning;               // Playing, opMode suspended
+static freq_t  bcTuned;                 // Applied to the receiver
+static uint8_t bcVolumeSet;
+static unsigned bcSeekSteps;            // Channels tried in this seek
+static unsigned bcPoll;                 // Steps since the last status read
+static struct rtxBroadcast bcState;     // For the UI
+
+void rtx_broadcastStart(freq_t freq, uint8_t volume)
+{
+    if(freq < BC_LOW)  freq = BC_LOW;
+    if(freq > BC_HIGH) freq = BC_HIGH;
+
+    pthread_mutex_lock(cfgMutex);
+    bcFreq     = freq;
+    bcVolume   = (volume > 15) ? 15 : volume;
+    bcSeek     = 0;
+    bcWanted   = true;
+    pthread_mutex_unlock(cfgMutex);
+}
+
+void rtx_broadcastSeek(int8_t dir)
+{
+    pthread_mutex_lock(cfgMutex);
+    bcSeek = dir;
+    bcSeekSteps = 0;
+    pthread_mutex_unlock(cfgMutex);
+}
+
+void rtx_broadcastStop()
+{
+    pthread_mutex_lock(cfgMutex);
+    bcWanted = false;
+    bcSeek   = 0;
+    pthread_mutex_unlock(cfgMutex);
+}
+
+void rtx_broadcastRead(struct rtxBroadcast *out)
+{
+    pthread_mutex_lock(cfgMutex);
+    *out = bcState;
+    pthread_mutex_unlock(cfgMutex);
+}
+
+/**
+ * \internal
+ * Play broadcast FM, if requested, in place of the operating mode.
+ *
+ * @return true if broadcast FM owns the radio for this RTX task step.
+ */
+static bool broadcastTask()
+{
+    pthread_mutex_lock(cfgMutex);
+    bool    wanted = bcWanted;
+    freq_t  freq   = bcFreq;
+    uint8_t volume = bcVolume;
+    int8_t  seek   = bcSeek;
+    pthread_mutex_unlock(cfgMutex);
+
+    if(wanted && !bcRunning)
+    {
+        // Suspend the operating mode: no audio, no transmission
+        currMode->disable();
+        rtxStatus.opStatus = OFF;
+        radio_broadcastOn(freq, volume);
+        bcTuned     = freq;
+        bcVolumeSet = volume;
+        bcRunning   = true;
+    }
+
+    if(!wanted && bcRunning)
+    {
+        // Resume it: the next update turns the receiver on again
+        radio_broadcastOff();
+        bcRunning = false;
+        rtxStatus.opStatus = OFF;
+        reinitFilter = true;
+        currMode->enable();
+        return false;
+    }
+
+    if(!bcRunning)
+        return false;
+
+    if(volume != bcVolumeSet)
+    {
+        radio_broadcastVolume(volume);
+        bcVolumeSet = volume;
+    }
+
+    if(seek != 0)
+    {
+        // Next channel, around the band; stop on a station or after a turn
+        freq = bcTuned + seek * BC_STEP;
+        if(freq > BC_HIGH) freq = BC_LOW;
+        if(freq < BC_LOW)  freq = BC_HIGH;
+        radio_broadcastTune(freq);
+        bcTuned = freq;
+        sleepFor(0, 60);
+
+        uint8_t rssi, snr;
+        bool station = radio_broadcastStatus(&rssi, &snr);
+        pthread_mutex_lock(cfgMutex);
+        bcFreq  = freq;
+        if(station || (++bcSeekSteps > (BC_HIGH - BC_LOW) / BC_STEP))
+            bcSeek = 0;
+        bcState = { freq, rssi, snr, station, bcSeek };
+        pthread_mutex_unlock(cfgMutex);
+        return true;
+    }
+
+    bool retuned = (freq != bcTuned);
+    if(retuned)
+    {
+        radio_broadcastTune(freq);
+        bcTuned = freq;
+    }
+
+    // The signal once a second (soon after a retune): bus traffic near the
+    // audio path is heard as clicks
+    if(retuned || (bcPoll == 3) || (++bcPoll >= 10))
+    {
+        bcPoll = retuned ? 0 : 4;
+        uint8_t rssi, snr;
+        bool station = radio_broadcastStatus(&rssi, &snr);
+        pthread_mutex_lock(cfgMutex);
+        bcState = { bcTuned, rssi, snr, station, 0 };
+        pthread_mutex_unlock(cfgMutex);
+    }
+
+    sleepFor(0, 100);
+    return true;
+}
+#endif
+
 void rtx_task()
 {
     /*
      * A spectrum sweep suspends the operating mode. New configurations wait
      * for its end: they are applied when the mode resumes.
      */
+    #ifdef CONFIG_FM_BROADCAST
+    if(broadcastTask())
+        return;
+    #endif
+
     #ifdef CONFIG_SPECTRUM
     if(spectrumTask())
         return;
