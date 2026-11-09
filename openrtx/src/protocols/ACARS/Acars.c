@@ -31,6 +31,9 @@
 #define ACARS_BSS
 #endif
 
+/* Tone-to-bit mappings searched, see bitsOf() */
+#define NHYP 6
+
 enum state { SEARCH = 0, WAIT_SOH, TEXT, CRC1, CRC2 };
 
 /* Demodulator and decoder: one thread only */
@@ -48,10 +51,12 @@ static struct {
     int lateIn;      /* Samples to the late reading, 0 none */
     bool prevSign;   /* Integrator sign at the previous sample */
     bool prevTone;   /* Last tone decided, within a frame */
+    bool prevBit;    /* Running XOR of the tones, within a frame */
     /* Sync search at every sampling phase: the last tone and 16 bits of
      * each phase, for each tone-to-bit mapping */
     bool searchTone[SPB];
-    uint16_t sr[SPB][4];
+    bool searchBit[SPB];
+    uint16_t sr[SPB][NHYP];
     int hyp; /* Mapping locked on */
     enum state state;
     uint8_t byte;
@@ -303,8 +308,26 @@ static void byteIn(uint8_t b)
 }
 
 /**
- * One tone decision: true for 1200 Hz.
+ * The bit a tone decision (true for 1200 Hz) stands for under each
+ * mapping: the tone itself, either polarity; whether the tone changed,
+ * either polarity; and the running XOR of the tones, either polarity. The
+ * last is coherent MSK as transmitted (1200 Hz when a bit differs from
+ * the one before), the polarity depending on where reception started.
+ * The last tone and running XOR are updated.
  */
+static void bitsOf(bool *bits, bool low, bool *tone, bool *acc)
+{
+    bool same = (low == *tone);
+    *tone = low;
+    *acc ^= low;
+    bits[0] = low;
+    bits[1] = !low;
+    bits[2] = same;
+    bits[3] = !same;
+    bits[4] = *acc;
+    bits[5] = !*acc;
+}
+
 /**
  * Sync search: every sample is a tone decision for its sampling phase. The
  * phase and the mapping that show SYN SYN set the bit clock and the
@@ -314,17 +337,17 @@ static void byteIn(uint8_t b)
 static void searchIn(bool low)
 {
     unsigned p = rx.phase;
-    bool same = (low == rx.searchTone[p]);
-    rx.searchTone[p] = low;
-    const bool bits[4] = { low, !low, same, !same };
+    bool bits[NHYP];
+    bitsOf(bits, low, &rx.searchTone[p], &rx.searchBit[p]);
 
-    for (int h = 0; h < 4; h++) {
+    for (int h = 0; h < NHYP; h++) {
         uint16_t *sr = &rx.sr[p][h];
         *sr = (uint16_t)((*sr >> 1) | (bits[h] ? 0x8000u : 0));
         if (*sr == SYNC) {
             rx.hyp = h;
             rx.countdown = SPB; /* This sample was a decision */
             rx.prevTone = low;
+            rx.prevBit = rx.searchBit[p];
             rx.state = WAIT_SOH;
             rx.byte = 0;
             rx.nbits = 0;
@@ -341,9 +364,8 @@ static void searchIn(bool low)
  */
 static void toneIn(bool low)
 {
-    bool same = (low == rx.prevTone);
-    rx.prevTone = low;
-    const bool bits[4] = { low, !low, same, !same };
+    bool bits[NHYP];
+    bitsOf(bits, low, &rx.prevTone, &rx.prevBit);
 
     /* Characters, least significant bit first */
     if (bits[rx.hyp])

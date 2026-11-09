@@ -24,9 +24,10 @@ extern "C" {
  *   negative on 2400 Hz) -> one-bit integrator (20 samples) -> bit clock
  *   (the phase with the largest output, tracked) -> tone decisions.
  *
- * The tones become bits one of four ways (the tone itself or its change,
- * either polarity); all four are searched for the SYN SYN sync word and
- * the frame is read with the one that has it. Characters are 7-bit ASCII
+ * The tones become bits one of six ways (the tone itself, its change, or
+ * the running XOR of the tones as coherent MSK sends them, each either
+ * polarity); all six are searched for the SYN SYN sync word and the frame
+ * is read with the one that has it. Characters are 7-bit ASCII
  * with odd parity, least significant bit first; a frame runs from SOH to
  * ETX or ETB, then a 16-bit CRC (CCITT, reflected) that must leave a zero
  * remainder. A frame with one or two characters failing parity is
