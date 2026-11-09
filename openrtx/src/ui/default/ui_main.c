@@ -2499,10 +2499,12 @@ static void _ui_richAis(void)
     // Reports and bad frames at the right, shorter if they do not fit
     char counts[24];
     const int16_t room = CONFIG_SCREEN_WIDTH - RICH_PAD - x - 6;
-    sniprintf(counts, sizeof(counts), "rx %lu bad %lu",
-              (unsigned long)st.frames, (unsigned long)st.crcErrors);
+    sniprintf(counts, sizeof(counts), "rx %lu fix %lu bad %lu",
+              (unsigned long)st.frames, (unsigned long)st.repaired,
+              (unsigned long)st.crcErrors);
     if(gfx_getTextWidth(FONT_SIZE_6PT, counts) > room)
-        sniprintf(counts, sizeof(counts), "%lu/%lu", (unsigned long)st.frames,
+        sniprintf(counts, sizeof(counts), "%lu/%lu/%lu",
+                  (unsigned long)st.frames, (unsigned long)st.repaired,
                   (unsigned long)st.crcErrors);
     _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, rich_grey,
                   "%s", counts);
