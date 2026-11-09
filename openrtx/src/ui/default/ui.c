@@ -119,6 +119,9 @@ extern void _ui_drawChannelSave(ui_state_t* ui_state);
 #endif
 #ifdef CONFIG_SPECTRUM
 extern void _ui_drawSpectrum(ui_state_t* ui_state);
+#ifdef CONFIG_FM_BROADCAST
+extern void _ui_drawFmRadio(ui_state_t* ui_state);
+#endif
 extern bool _ui_spectrumUpdate(ui_state_t* ui_state);
 extern uint8_t _ui_spectrumPeak(ui_state_t* ui_state);
 #endif
@@ -1105,6 +1108,120 @@ static void _ui_fsm_spectrum(kbd_msg_t msg, bool *sync_rtx)
 }
 #endif
 
+#ifdef CONFIG_FM_BROADCAST
+/* Broadcast band and step, in Hz */
+#define FMBC_LOW  87500000
+#define FMBC_HIGH 108000000
+#define FMBC_STEP 100000
+
+static uint8_t fm_returnScreen; // VFO or memory screen to go back to
+
+/**
+ * Open the broadcast FM screen: the operating mode is suspended, the last
+ * station plays.
+ */
+static void _ui_fmRadioEnter()
+{
+    if(ui_state.fm_freq < FMBC_LOW || ui_state.fm_freq > FMBC_HIGH)
+    {
+        ui_state.fm_freq = 100100000;
+        ui_state.fm_volume = 10;
+    }
+    ui_state.fm_input = false;
+    memset(&ui_state.fm_shown, 0, sizeof(ui_state.fm_shown));
+    fm_returnScreen = state.ui_screen;
+    rtx_broadcastStart(ui_state.fm_freq, ui_state.fm_volume);
+    state.ui_screen = FM_RADIO;
+}
+
+static void _ui_fmRadioTune(freq_t freq)
+{
+    if(freq < FMBC_LOW)
+        freq = FMBC_HIGH;
+    if(freq > FMBC_HIGH)
+        freq = FMBC_LOW;
+    ui_state.fm_freq = freq;
+    rtx_broadcastStart(freq, ui_state.fm_volume);
+}
+
+static void _ui_fsm_fmRadio(kbd_msg_t msg)
+{
+    // The frequency a seek arrived at
+    struct rtxBroadcast bc;
+    rtx_broadcastRead(&bc);
+    if(bc.freq != 0)
+        ui_state.fm_freq = bc.freq;
+
+    if(ui_state.fm_input)
+    {
+        // Digits in tenths of MHz: 1001 is 100.1, 875 is 87.5
+        int digit = (msg.keys & KBD_NUM_MASK) ? input_getPressedNumber(msg)
+                                              : -1;
+        if(msg.keys & KEY_ESC)
+        {
+            ui_state.fm_input = false;
+        }
+        else if(msg.keys & KEY_ENTER)
+        {
+            ui_state.fm_input = false;
+            freq_t f = (freq_t)atoi(ui_state.fm_input_buf) * 100000;
+            if(f >= FMBC_LOW && f <= FMBC_HIGH)
+                _ui_fmRadioTune(f);
+        }
+        else if((digit >= 0) && (ui_state.fm_digits < 4))
+        {
+            ui_state.fm_input_buf[ui_state.fm_digits++] = '0' + digit;
+            ui_state.fm_input_buf[ui_state.fm_digits] = '\0';
+        }
+        return;
+    }
+
+    if(msg.keys & KEY_ESC)
+    {
+        rtx_broadcastStop();
+        state.ui_screen = fm_returnScreen;
+    }
+    else if(msg.keys & (KEY_UP | KNOB_RIGHT))
+    {
+        _ui_fmRadioTune(ui_state.fm_freq + FMBC_STEP);
+    }
+    else if(msg.keys & (KEY_DOWN | KNOB_LEFT))
+    {
+        _ui_fmRadioTune(ui_state.fm_freq - FMBC_STEP);
+    }
+    else if(msg.keys & KEY_F2)
+    {
+        rtx_broadcastSeek(1);
+    }
+    else if(msg.keys & KEY_F1)
+    {
+        rtx_broadcastSeek(-1);
+    }
+    else if(msg.keys & KEY_HASH)
+    {
+        if(ui_state.fm_volume < 15)
+            ui_state.fm_volume++;
+        rtx_broadcastStart(ui_state.fm_freq, ui_state.fm_volume);
+    }
+    else if(msg.keys & KEY_STAR)
+    {
+        if(ui_state.fm_volume > 0)
+            ui_state.fm_volume--;
+        rtx_broadcastStart(ui_state.fm_freq, ui_state.fm_volume);
+    }
+    else if(msg.keys & KBD_NUM_MASK)
+    {
+        int digit = input_getPressedNumber(msg);
+        {
+            ui_state.fm_input = true;
+            ui_state.fm_digits = 1;
+            ui_state.fm_input_buf[0] = '0' + digit;
+            ui_state.fm_input_buf[1] = '\0';
+        }
+    }
+}
+#endif
+
 #ifdef CONFIG_UI_SAVE_CHANNEL
 /* Memories the CPS can hold */
 #define SAVE_MAX_CHANNELS 128
@@ -1532,6 +1649,13 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
     // Spectrum around the VFO frequency
     if((msg.keys & KEY_0) && (state.ui_screen == MAIN_VFO))
         _ui_spectrumEnter(sync_rtx);
+#endif
+
+#ifdef CONFIG_FM_BROADCAST
+    // Broadcast FM radio
+    if((msg.keys & KEY_HASH) && (state.ui_screen == MAIN_VFO
+                                 || state.ui_screen == MAIN_MEM))
+        _ui_fmRadioEnter();
 #endif
 
 #ifdef CONFIG_UI_FLASHLIGHT
@@ -2204,6 +2328,12 @@ void ui_updateFSM(bool *sync_rtx)
             // Save VFO screen
             case CHANNEL_SAVE:
                 _ui_fsm_channelSave(msg);
+                break;
+#endif
+#ifdef CONFIG_FM_BROADCAST
+            // Broadcast FM screen
+            case FM_RADIO:
+                _ui_fsm_fmRadio(msg);
                 break;
 #endif
             // VFO frequency input screen
@@ -3233,6 +3363,29 @@ bool ui_updateGUI()
         redraw_needed = true;
 #endif
 
+#ifdef CONFIG_FM_BROADCAST
+    // Redraw when the station or a seek moves; the signal figures at most
+    // every 3 s and if they moved enough: the display bus is heard as
+    // clicks in the broadcast audio
+    if((last_state.ui_screen == FM_RADIO) && (standby == false))
+    {
+        static long long fmDrawn;
+        struct rtxBroadcast bc;
+        const struct rtxBroadcast *s = &ui_state.fm_shown;
+        rtx_broadcastRead(&bc);
+        int drssi = (int)bc.rssi - (int)s->rssi;
+        int dsnr = (int)bc.snr - (int)s->snr;
+        if((bc.freq != s->freq) || (bc.station != s->station)
+           || (bc.seek != s->seek))
+            redraw_needed = true;
+        else if(((drssi > 3) || (drssi < -3) || (dsnr > 1) || (dsnr < -1))
+                && (getTick() - fmDrawn >= 3000))
+            redraw_needed = true;
+        if(redraw_needed)
+            fmDrawn = getTick();
+    }
+#endif
+
     if(redraw_needed == false)
         return false;
 
@@ -3357,6 +3510,12 @@ bool ui_updateGUI()
         // Save VFO screen
         case CHANNEL_SAVE:
             _ui_drawChannelSave(&ui_state);
+            break;
+#endif
+#ifdef CONFIG_FM_BROADCAST
+        // Broadcast FM screen
+        case FM_RADIO:
+            _ui_drawFmRadio(&ui_state);
             break;
 #endif
     }

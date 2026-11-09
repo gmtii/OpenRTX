@@ -33,7 +33,7 @@
 #endif
 
 #if defined(CONFIG_TETRA) || defined(CONFIG_SPECTRUM) || defined(CONFIG_ACARS) \
-    || defined(CONFIG_AIS)
+    || defined(CONFIG_AIS) || defined(CONFIG_FM_BROADCAST)
 /* Secondary text of the information pages: color_grey is too dark on black */
 static const color_t info_grey = { 160, 160, 160, 255 };
 #endif
@@ -1759,6 +1759,94 @@ void _ui_drawSpectrum(ui_state_t *ui_state)
     gfx_print((point_t){ 0, y }, font, TEXT_ALIGN_CENTER, info_grey,
               ui_state->spec_input ? "ENTER:go ESC:cancel"
                                    : "PTT:VFO 0:pk *+ #- 5:f");
+}
+#endif
+
+#ifdef CONFIG_FM_BROADCAST
+/**
+ * Broadcast FM screen: the station, its signal, the volume and the keys.
+ */
+void _ui_drawFmRadio(ui_state_t *ui_state)
+{
+    static const color_t green = { 63, 191, 95, 255 };
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t pad = layout.horizontal_pad;
+    struct rtxBroadcast bc;
+    rtx_broadcastRead(&bc);
+    ui_state->fm_shown = bc;
+    freq_t f = (bc.freq != 0) ? bc.freq : ui_state->fm_freq;
+
+    gfx_clearScreen();
+    gfx_print((point_t){ pad, 11 }, font, TEXT_ALIGN_LEFT, yellow_fab413,
+              "FM radio");
+    gfx_print((point_t){ pad, 11 }, font, TEXT_ALIGN_RIGHT, color_white,
+              "Vol %u", ui_state->fm_volume);
+    gfx_drawLine((point_t){ 0, 15 }, (point_t){ CONFIG_SCREEN_WIDTH - 1, 15 },
+                 info_grey);
+
+    // The frequency, or the one being typed
+    char buf[16];
+    color_t fc = color_white;
+    if(ui_state->fm_input)
+    {
+        sniprintf(buf, sizeof(buf), "%s_", ui_state->fm_input_buf);
+        fc = yellow_fab413;
+    }
+    else
+    {
+        sniprintf(buf, sizeof(buf), "%lu.%lu", (unsigned long)(f / 1000000),
+                  (unsigned long)((f % 1000000) / 100000));
+    }
+    uint16_t fw = gfx_getTextWidth(FONT_SIZE_16PT, buf);
+    uint16_t uw = gfx_getTextWidth(font, "MHz");
+    int16_t x = (CONFIG_SCREEN_WIDTH - fw - uw - 4) / 2;
+    gfx_print((point_t){ x, 48 }, FONT_SIZE_16PT, TEXT_ALIGN_LEFT, fc, "%s",
+              buf);
+    gfx_print((point_t){ (int16_t)(x + fw + 4), 48 }, font, TEXT_ALIGN_LEFT,
+              info_grey, ui_state->fm_input ? "x0.1" : "MHz");
+
+    // Station, or the seek going on
+    const char *st;
+    color_t sc;
+    if(bc.seek > 0)
+    {
+        st = "Seeking up";
+        sc = yellow_fab413;
+    }
+    else if(bc.seek < 0)
+    {
+        st = "Seeking down";
+        sc = yellow_fab413;
+    }
+    else if(bc.station)
+    {
+        st = "Station";
+        sc = green;
+    }
+    else
+    {
+        st = "No station";
+        sc = info_grey;
+    }
+    gfx_print((point_t){ 0, 66 }, font, TEXT_ALIGN_CENTER, sc, "%s", st);
+
+    // Signal bar, RSSI 0 to 80
+    const int16_t bx = pad, bw = CONFIG_SCREEN_WIDTH - 2 * pad, by = 74;
+    int16_t w = (int16_t)((bc.rssi > 80 ? 80 : bc.rssi) * bw / 80);
+    gfx_drawRect((point_t){ bx, by }, bw, 8, info_grey, false);
+    if(w > 2)
+        gfx_drawRect((point_t){ (int16_t)(bx + 1), (int16_t)(by + 1) },
+                     w - 2, 6, bc.station ? green : yellow_fab413, true);
+    gfx_print((point_t){ 0, 94 }, font, TEXT_ALIGN_CENTER, info_grey,
+              "RSSI %u  SNR %u", bc.rssi, bc.snr);
+
+    // Keys
+    gfx_print((point_t){ 0, 112 }, font, TEXT_ALIGN_CENTER, info_grey,
+              ui_state->fm_input ? "1001 = 100.1 MHz"
+                                 : "UP/DN tune  P1/P2 seek");
+    gfx_print((point_t){ 0, 124 }, font, TEXT_ALIGN_CENTER, info_grey,
+              ui_state->fm_input ? "ENTER:go ESC:cancel"
+                                 : "*/# vol  0-9 freq  ESC");
 }
 #endif
 

@@ -54,7 +54,8 @@ enum uiScreen
     SETTINGS_RESET2DEFAULTS,
     LOW_BAT,
     SPECTRUM,
-    CHANNEL_SAVE
+    CHANNEL_SAVE,
+    FM_RADIO
 };
 
 /* TETRA pages of the VFO screen */
@@ -285,6 +286,16 @@ typedef struct ui_state_t
     bool spec_input;
     uint8_t spec_digits;
     char spec_input_buf[8];
+#endif
+#ifdef CONFIG_FM_BROADCAST
+    // Broadcast FM screen (MONI + #): station, volume 0-15, frequency
+    // being typed (digits, tenths of MHz)
+    freq_t fm_freq;
+    uint8_t fm_volume;
+    bool fm_input;
+    uint8_t fm_digits;
+    char fm_input_buf[6];
+    struct rtxBroadcast fm_shown; // State last drawn
 #endif
 }
 ui_state_t;
