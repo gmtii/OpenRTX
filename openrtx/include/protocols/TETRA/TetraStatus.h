@@ -33,6 +33,7 @@ struct tetraStatus {
     bool callGroup;      /**< Group call */
     bool callEncrypted;  /**< Call or its traffic is encrypted */
     bool callUnknown;    /**< Traffic of no call set up in clear: not played */
+    bool callFiltered;   /**< Traffic of a call outside the group filter */
     bool voice;          /**< Traffic seen in the last second */
     uint16_t callId;     /**< Call identifier */
     uint32_t callDst;    /**< Called (group) SSI, 0 if unknown */
@@ -92,6 +93,20 @@ void tetraStatus_setDemod(unsigned phaseErr, int carrierHz);
  * @return true while locked to a TMO downlink.
  */
 bool tetraStatus_sync(void);
+
+/**
+ * Play only the calls to one group, as the ESP32-P4 SDR's pin: the other
+ * calls are still shown, but not played. Kept until changed, across
+ * frequencies.
+ *
+ * @param gssi: the group, 0 to play every clear call again.
+ */
+void tetraStatus_setFilter(uint32_t gssi);
+
+/**
+ * @return the group filter, 0 if none.
+ */
+uint32_t tetraStatus_filter(void);
 
 #ifdef __cplusplus
 }

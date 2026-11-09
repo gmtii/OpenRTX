@@ -49,8 +49,12 @@ struct knownCall {
     uint8_t timeslots;   /* Bit 0 = TN1, 0 if unknown */
     bool encrypted;
     bool data;
+    uint32_t dst;   /* Called group or radio, 0 if unknown */
     long long last; /* Tick of the last signalling */
 };
+
+/* Group whose calls only are played, 0 for all; under statusMutex */
+static uint32_t filterGssi;
 
 static struct knownCall calls[MAX_CALLS]; /* Under statusMutex */
 
@@ -108,6 +112,8 @@ static void trackCall(const struct tetra_call *c)
         k->timeslots = c->timeslots;
     k->encrypted |= c->encrypted;
     k->data = (c->circuit_type != 0);
+    if (c->dst_ssi != 0)
+        k->dst = c->dst_ssi;
     k->last = getTick();
 
     status.lastCallId = k->id;
@@ -124,8 +130,10 @@ static void trackCall(const struct tetra_call *c)
 /**
  * Tell which known call a traffic slot belongs to.
  */
-static enum tetraTrafficCall matchTraffic(const struct tetra_traffic *t)
+static enum tetraTrafficCall matchTraffic(const struct tetra_traffic *t,
+                                          uint32_t *dst)
 {
+    *dst = 0;
     if (t->encrypted)
         return TETRA_TRAFFIC_ENCRYPTED;
 
@@ -142,16 +150,23 @@ static enum tetraTrafficCall matchTraffic(const struct tetra_traffic *t)
         bool marker = (k->usageMarker != 0)
                    && (k->usageMarker == t->usage_marker);
         if (marker || (k->timeslots & slot)) {
+            *dst = k->dst;
             if (k->encrypted)
                 return TETRA_TRAFFIC_ENCRYPTED;
             return k->data ? TETRA_TRAFFIC_DATA : TETRA_TRAFFIC_CLEAR;
         }
     }
 
-    /* libtetra matched it to a call of its own */
-    if (t->call_id != 0 || t->talker_ssi != 0)
+    /* libtetra matched it to a call of its own: its destination, if the
+     * call is known here by its identifier */
+    if (t->call_id != 0 || t->talker_ssi != 0) {
+        for (int i = 0; i < MAX_CALLS; i++) {
+            if (calls[i].used && calls[i].id == t->call_id)
+                *dst = calls[i].dst;
+        }
         return (t->circuit_type != 0) ? TETRA_TRAFFIC_DATA :
                                         TETRA_TRAFFIC_CLEAR;
+    }
 
     return TETRA_TRAFFIC_UNKNOWN;
 }
@@ -209,6 +224,7 @@ static void onCall(const struct tetra_call *c)
         status.callDst = 0;
         status.callEncrypted = false;
         status.callUnknown = false;
+        status.callFiltered = false;
     }
     status.call = true;
     status.callId = c->call_id;
@@ -227,8 +243,12 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
     /* Speech first, outside the status lock */
     enum tetraTrafficCall call = TETRA_TRAFFIC_UNKNOWN;
     if (ev->type == TETRA_EV_TRAFFIC) {
+        uint32_t dst;
         pthread_mutex_lock(&statusMutex);
-        call = matchTraffic(&ev->u.traffic);
+        call = matchTraffic(&ev->u.traffic, &dst);
+        /* A group filter set: only that group's calls are played */
+        if (call == TETRA_TRAFFIC_CLEAR && filterGssi != 0 && dst != filterGssi)
+            call = TETRA_TRAFFIC_FILTERED;
         pthread_mutex_unlock(&statusMutex);
         tetraSpeech_traffic(&ev->u.traffic, call);
     }
@@ -267,6 +287,7 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
                 status.talker = t->talker_ssi;
             status.callEncrypted |= (call == TETRA_TRAFFIC_ENCRYPTED);
             status.callUnknown = (call == TETRA_TRAFFIC_UNKNOWN);
+            status.callFiltered = (call == TETRA_TRAFFIC_FILTERED);
             status.lastTrafficMarker = t->usage_marker;
             status.lastTrafficTn = t->time.tn;
             if (!status.call)
@@ -329,4 +350,19 @@ bool tetraStatus_sync(void)
     bool sync = status.sync;
     pthread_mutex_unlock(&statusMutex);
     return sync;
+}
+
+void tetraStatus_setFilter(uint32_t gssi)
+{
+    pthread_mutex_lock(&statusMutex);
+    filterGssi = gssi;
+    pthread_mutex_unlock(&statusMutex);
+}
+
+uint32_t tetraStatus_filter(void)
+{
+    pthread_mutex_lock(&statusMutex);
+    uint32_t g = filterGssi;
+    pthread_mutex_unlock(&statusMutex);
+    return g;
 }

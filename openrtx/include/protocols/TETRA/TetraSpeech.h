@@ -23,6 +23,7 @@ enum tetraTrafficCall {
     TETRA_TRAFFIC_CLEAR,       /**< Clear speech call */
     TETRA_TRAFFIC_ENCRYPTED,   /**< End-to-end or air encrypted call */
     TETRA_TRAFFIC_DATA,        /**< Circuit mode data call */
+    TETRA_TRAFFIC_FILTERED,    /**< Clear speech outside the group filter */
 };
 
 /*
@@ -43,6 +44,7 @@ struct tetraSpeechStats {
     uint32_t encrypted; /**< Not played: encrypted call */
     uint32_t data;      /**< Not played: data call */
     uint32_t unknown;   /**< Not played: no call set up in clear */
+    uint32_t filtered;  /**< Not played: outside the group filter */
     uint32_t queued;    /**< Speech frames queued for playback */
     uint32_t bad;       /**< Queued frames with errors (concealed) */
     uint32_t played;    /**< Frames played */

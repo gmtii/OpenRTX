@@ -57,7 +57,8 @@ static volatile bool playing; /* Speech on the speaker */
  * ones not played and why, speech frames queued (bad ones among them),
  * frames played and speaker openings that failed.
  */
-static volatile uint32_t statSlots, statEnc, statData, statUnknown;
+static volatile uint32_t statSlots, statEnc, statData, statUnknown,
+    statFiltered;
 static volatile uint32_t statQueued, statBad, statPlayed, statNoPath;
 static uint32_t statLastSlots;
 static long long statNext;
@@ -68,6 +69,7 @@ void tetraSpeech_getStats(struct tetraSpeechStats *out)
     out->encrypted = statEnc;
     out->data = statData;
     out->unknown = statUnknown;
+    out->filtered = statFiltered;
     out->queued = statQueued;
     out->bad = statBad;
     out->played = statPlayed;
@@ -192,7 +194,7 @@ void tetraSpeech_start(void)
     queueHead = queueCount = 0;
     pthread_mutex_unlock(&queueMutex);
     stopRequest = false;
-    statSlots = statEnc = statData = statUnknown = 0;
+    statSlots = statEnc = statData = statUnknown = statFiltered = 0;
     statQueued = statBad = statPlayed = statNoPath = 0;
     statLastSlots = 0;
 
@@ -247,6 +249,9 @@ void tetraSpeech_traffic(const struct tetra_traffic *t,
             return;
         case TETRA_TRAFFIC_DATA:
             statData++;
+            return;
+        case TETRA_TRAFFIC_FILTERED:
+            statFiltered++;
             return;
         default:
             statUnknown++;
