@@ -88,6 +88,10 @@ option(C62_AM "AM receive mode and air band" ON)
 # C62_ACARS: ACARS receive mode ("ACARS" under key 5, after AM): the AM
 #   detector's audio, 2400 bit/s MSK decoded in software.
 option(C62_ACARS "ACARS receive mode" ON)
+# C62_AIS: AIS receive mode ("AIS" under key 5, after ACARS): the FM
+#   discriminator on the wide TETRA path, 9600 bit/s GMSK decoded in
+#   software.
+option(C62_AIS "AIS receive mode" ON)
 # C62_SPECTRUM: spectrum view (MONI + 0 on the VFO screen), RSSI swept
 #   across a range; PTT tunes the VFO to the marker.
 option(C62_SPECTRUM "Spectrum view" ON)
@@ -227,6 +231,13 @@ if(C62_ACARS)
   target_compile_definitions(app PRIVATE CONFIG_ACARS)
 endif()
 
+if(C62_AIS)
+  target_sources(app PRIVATE
+    ${OPENRTX_ROOT}/openrtx/src/protocols/AIS/Ais.c
+    ${OPENRTX_ROOT}/openrtx/src/rtx/OpMode_AIS.cpp)
+  target_compile_definitions(app PRIVATE CONFIG_AIS)
+endif()
+
 if(C62_SPECTRUM)
   target_compile_definitions(app PRIVATE CONFIG_SPECTRUM)
 endif()
@@ -245,7 +256,7 @@ endif()
 
 message(STATUS "C62: wide RX ${C62_WIDE_RX}, TETRA ${C62_TETRA} "
                "(speech ${C62_TETRA_SPEECH}), DMR ${c62_dmr_status}, "
-               "AM ${C62_AM}, ACARS ${C62_ACARS}, spectrum ${C62_SPECTRUM}, rich UI ${C62_RICH_UI}, "
+               "AM ${C62_AM}, ACARS ${C62_ACARS}, AIS ${C62_AIS}, spectrum ${C62_SPECTRUM}, rich UI ${C62_RICH_UI}, "
                "REG_43 sweep ${C62_REG43_SWEEP}, "
                "baseband dump ${C62_BASEBAND_DUMP} "
                "(${C62_BASEBAND_DUMP_BAUD} baud, format "
