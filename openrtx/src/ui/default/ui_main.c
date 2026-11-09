@@ -25,6 +25,11 @@
 #define UI_BSS
 #endif
 
+#if defined(CONFIG_TETRA) || defined(CONFIG_SPECTRUM)
+/* Secondary text of the information pages: color_grey is too dark on black */
+static const color_t info_grey = { 160, 160, 160, 255 };
+#endif
+
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraStatus.h"
 #include "protocols/TETRA/TetraCell.h"
@@ -806,10 +811,10 @@ static void _ui_drawTetraSds(ui_state_t *ui_state)
     const char *kind = (m->kind < sizeof(kinds) / sizeof(kinds[0]))
                      ? kinds[m->kind] : "?";
     if (m->parts > 0)
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "%s, %u/%u parts",
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s, %u/%u parts",
                   kind, m->partsGot, m->parts);
     else
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "%s", kind);
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s", kind);
 
     // Message, wrapped over the rest of the screen
     pos.y += step;
@@ -860,7 +865,7 @@ static int16_t _ui_heardList(ui_state_t *ui_state, const char *title, int n,
     if(n == 0)
     {
         pos.y += 2 * step;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "None heard yet");
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "None heard yet");
         return CONFIG_SCREEN_HEIGHT;
     }
 
@@ -888,7 +893,7 @@ static int16_t _ui_heardList(ui_state_t *ui_state, const char *title, int n,
     }
 
     int16_t dy = y + 3 + step * (HEARD_ROWS + 1) + 2;
-    gfx_drawHLine(dy - 2, 1, color_grey);
+    gfx_drawHLine(dy - 2, 1, info_grey);
     return dy;
 }
 
@@ -976,7 +981,7 @@ static void _ui_drawTetraCalls(ui_state_t *ui_state)
         o += strlen(id);
     }
     pos.y += 11;
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "%s",
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s",
               line[0] ? line : "No talker known");
 }
 
@@ -1018,7 +1023,7 @@ static void _ui_drawTetraGroups(ui_state_t *ui_state)
         o += strlen(id);
     }
     pos.y += 11;
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "%s", line);
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s", line);
 }
 
 /**
@@ -1051,7 +1056,7 @@ static void _ui_drawTetraCell(void)
     {
         gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "Cell");
         pos.y += 2 * step;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "No cell yet");
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "No cell yet");
         return;
     }
 
@@ -1071,7 +1076,7 @@ static void _ui_drawTetraCell(void)
         gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "DL %s UL %s", dl,
                   ul);
         pos.y += step;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey,
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey,
                   "Ch %u B%u%s D%u%s", c.carrier, c.band,
                   offsets[c.offset & 3], c.duplex, c.reverse ? " rev" : "");
 
@@ -1112,17 +1117,17 @@ static void _ui_drawTetraCell(void)
     else
     {
         pos.y += step;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "Waiting for SYSINFO");
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "Waiting for SYSINFO");
     }
 
     static const char *const sharing[] = { "continuous", "carrier sharing",
                                            "MCCH sharing", "traffic sharing" };
     pos.y += step;
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "Sys %u%s, %s",
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "Sys %u%s, %s",
               c.systemCode, (c.systemCode == 3) ? " (V3)" : "",
               sharing[c.sharing & 3]);
     pos.y += step;
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "HF %u CCK %u",
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "HF %u CCK %u",
               c.hyperframe, c.cck);
 
     struct tetraTime t;
@@ -1142,7 +1147,7 @@ static void _ui_drawTetraCell(void)
         gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", tm);
     }
     else
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "No network time yet");
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "No network time yet");
 }
 
 /**
@@ -1160,7 +1165,7 @@ static void _ui_drawTetraNeighbours(void)
     if(n == 0)
     {
         pos.y += 2 * step;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "None announced yet");
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "None announced yet");
         return;
     }
 
@@ -1187,7 +1192,7 @@ static void _ui_drawTetraNeighbours(void)
 
         pos.y += step;
         gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", left);
-        gfx_print(pos, font, TEXT_ALIGN_RIGHT, color_grey, "%s", right);
+        gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey, "%s", right);
     }
 }
 
@@ -1211,14 +1216,14 @@ static void _ui_drawTetraRadios(ui_state_t *ui_state)
     if(r->pos)
     {
         long la = r->lat, lo = r->lon;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey,
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey,
                   "%s%ld.%05ld %s%ld.%05ld", la < 0 ? "-" : "",
                   labs(la) / 100000, labs(la) % 100000, lo < 0 ? "-" : "",
                   labs(lo) / 100000, labs(lo) % 100000);
     }
     else
     {
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_grey, "No position");
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "No position");
     }
 }
 #endif
@@ -1240,7 +1245,7 @@ static void _ui_drawTetraScope(void)
     struct tetraStatus ts;
     tetra_getStatus(&ts);
 
-    static const color_t grey = { 96, 96, 96, 255 };
+    static const color_t grey = { 120, 120, 120, 255 };
     static const color_t dot = { 47, 179, 196, 255 };
     const fontSize_t font = FONT_SIZE_6PT;
     const int16_t top = layout.top_h + 3;
@@ -1316,7 +1321,7 @@ static void _ui_drawTetraScope(void)
                      yellow_fab413);
     }
     gfx_print((point_t){ hx, (int16_t)(hy + hh + 15) }, font, TEXT_ALIGN_LEFT,
-              color_grey, "Raw, marks: fit");
+              info_grey, "Raw, marks: fit");
 }
 #endif
 
@@ -1335,7 +1340,7 @@ static bool _ui_drawTetraPage(ui_state_t *ui_state)
     _ui_drawMainTop(ui_state);
 
     // Page number, the key that goes straight to it
-    gfx_print(layout.top_pos, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, color_grey,
+    gfx_print(layout.top_pos, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, info_grey,
               "%u/%u", ui_state->tetra_page, TETRA_PAGE_NUM - 1);
 
     switch(ui_state->tetra_page)
@@ -1600,7 +1605,7 @@ void _ui_drawSpectrum(ui_state_t *ui_state)
 
     // Keys
     y += fh + 2;
-    gfx_print((point_t){ 0, y }, font, TEXT_ALIGN_CENTER, color_grey,
+    gfx_print((point_t){ 0, y }, font, TEXT_ALIGN_CENTER, info_grey,
               ui_state->spec_input ? "ENTER:go ESC:cancel"
                                    : "PTT:VFO 0:pk *+ #- 5:f");
 }
