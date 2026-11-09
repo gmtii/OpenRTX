@@ -22,6 +22,9 @@
 #ifdef CONFIG_ACARS
 #include "rtx/OpMode_ACARS.hpp"
 #endif
+#ifdef CONFIG_AIS
+#include "rtx/OpMode_AIS.hpp"
+#endif
 
 static pthread_mutex_t   *cfgMutex;     // Mutex for incoming config messages
 static const rtxStatus_t *newCnf;       // Pointer for incoming config messages
@@ -46,6 +49,9 @@ static OpMode_AM  amMode;               // AM receive mode handler
 #endif
 #ifdef CONFIG_ACARS
 static OpMode_ACARS acarsMode;          // ACARS receive mode handler
+#endif
+#ifdef CONFIG_AIS
+static OpMode_AIS aisMode;              // AIS receive mode handler
 #endif
 
 #ifdef CONFIG_SPECTRUM
@@ -305,6 +311,9 @@ void rtx_task()
                 #endif
                 #ifdef CONFIG_ACARS
                 case OPMODE_ACARS: currMode = &acarsMode; break;
+                #endif
+                #ifdef CONFIG_AIS
+                case OPMODE_AIS:  currMode = &aisMode; break;
                 #endif
                 default:   currMode = &noMode;
             }

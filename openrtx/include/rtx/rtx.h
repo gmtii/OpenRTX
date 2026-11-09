@@ -77,7 +77,8 @@ enum opmode
     OPMODE_M17  = 3,        /**< M17                */
     OPMODE_TETRA = 4,       /**< TETRA (receive)    */
     OPMODE_AM   = 5,        /**< Analog AM (receive) */
-    OPMODE_ACARS = 6        /**< ACARS data on AM (receive) */
+    OPMODE_ACARS = 6,       /**< ACARS data on AM (receive) */
+    OPMODE_AIS  = 7         /**< AIS data on FM (receive) */
 };
 
 /**
