@@ -341,6 +341,11 @@ UV-K5. A bar rises at once with the signal and falls back slowly, so that
 the noise does not flicker; the 60 dB high scale starts just below the
 noise floor and moves only when the floor moves by 6 dB.
 
+Under the bars, a waterfall shows the raw sweeps, the newest at the top,
+about 13 s of history: black at the noise floor, then blue, cyan, yellow,
+red and white 40 dB above it. Two yellow ticks mark the marker's column.
+A new range starts it again.
+
 | Key | Action |
 |---|---|
 | **UP** / **DOWN** | Move the marker one point |
