@@ -57,6 +57,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
 | `C62_ACARS` | `ON` | ACARS receive mode "ACARS" (section 13) |
+| `C62_AIS` | `ON` | AIS receive mode "AIS" (section 14) |
 | `C62_SPECTRUM` | `ON` | Spectrum view, MONI + 0 on the VFO screen (section 9) |
 | `C62_RICH_UI` | `ON` | Main screen with a mode badge, the receiver state (RX, TX, SYNC, LOCK), call cards and a segmented S-meter, also in the macro menu (squelch level and threshold in FM and AM); macro keys 7 and 8 set the frequency step instead of the brightness. `OFF` keeps the default OpenRTX screen and macro menu |
 | `C62_REG43_SWEEP` | `OFF` | Cycle `REG_43` through 7 test values in M17 RX |
@@ -427,3 +428,40 @@ The Flipper Zero test files of the
 (OOK on 433.650 MHz) decode with the radio in ACARS mode on 433.650 MHz.
 Their frames use a letter block identifier with a flight number, so the
 flight shows inside the text.
+
+## 14. AIS mode
+
+**AIS** follows **ACARS** under key **5**. It receives the FM
+discriminator through the same wide, flat path as TETRA and decodes AIS
+(ITU-R M.1371: 9600 bit/s GMSK, NRZI, HDLC) in software. Tune the VFO to
+**AIS1, 161.975 MHz** or **AIS2, 162.025 MHz**: one channel at a time. It
+is receive only, and building with `C62_AIS=OFF` removes it entirely.
+
+Stations are kept in a table of 32, merged by MMSI, the oldest replaced
+when it is full: positions from messages 1, 2, 3 (class A), 18 and 19
+(class B), 4 (base stations), 9 (SAR aircraft), 21 (aids to navigation)
+and 27 (long range); names, call signs, ship types, dimensions and
+destinations from 5, 19, 21 and 24. Positions marked not available are
+not shown.
+
+The main screen shows the stations, the reports received and the frames
+dropped on a bad CRC (`rx 24 bad 10`, or `24/10` when long), and the
+newest station: its name (or MMSI until a static report names it), class
+and age, then its position, speed, course, navigational status and
+destination scrolling. The green LED flashes for each report and the
+screen wakes. **\*** opens the station page: one station whole (MMSI,
+call sign, position, SOG / COG / heading, status and type, destination,
+dimensions and draught, reports), **UP/DOWN** go through them, newest
+first, **\*** or **ESC** close it.
+
+The receiver takes the centre and amplitude of the signal from its
+highest and lowest levels over the last 13 bits, so a carrier offset or a
+burst starting after noise settles within a few bits; three slicers with
+different hysteresis, each with its own bit clock, decode every burst and
+the first valid frame counts.
+
+The Flipper Zero test files of the
+[UV-K1/K5 custom firmware](https://github.com/armel/uv-k1-k5v3-firmware-custom/tree/main/App/apps/aisrx/test)
+(2-FSK on 433.650 MHz) decode with the radio in AIS mode on 433.650 MHz:
+all of them but `ais_badcrc.sub`, which counts as `bad`. `ais_inland.sub`
+(message 8, Inland AIS) only adds a report to its MMSI.
