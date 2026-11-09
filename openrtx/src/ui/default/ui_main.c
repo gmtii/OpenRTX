@@ -1537,6 +1537,41 @@ static rssi_t spec_rssi[RTX_SPECTRUM_MAX_POINTS];
 static int32_t spec_level[RTX_SPECTRUM_MAX_POINTS]; /* 1/16 dB */
 static rssi_t spec_floor; /* Bottom of the scale, moved only by 6 dB or more */
 
+/*
+ * Waterfall: the raw sweeps, newest first, in dBm. Rows of the screen are
+ * at most WF_ROWS; in PSRAM on the C62.
+ */
+#define WF_ROWS 64
+#define WF_RANGE 40 /* dB from the noise floor to the top colour */
+static UI_BSS int8_t wf[WF_ROWS][SPECTRUM_POINTS];
+static uint8_t wf_head;  /* Row of the newest sweep */
+static uint8_t wf_count; /* Rows filled */
+
+/**
+ * Colour of a waterfall level, 0 (noise floor) to 255 (WF_RANGE above):
+ * black, blue, cyan, yellow, red, white.
+ */
+static color_t _ui_wfColor(int v)
+{
+    static const uint8_t stops[][3] = {
+        { 0, 0, 0 },     { 0, 0, 160 },  { 0, 160, 255 },
+        { 255, 230, 0 }, { 255, 32, 0 }, { 255, 255, 255 },
+    };
+    const int n = sizeof(stops) / sizeof(stops[0]) - 1;
+    if (v < 0)
+        v = 0;
+    if (v > 255)
+        v = 255;
+    int seg = (v * n) / 256;
+    int f = (v * n) % 256; /* 0..255 within the segment */
+    color_t c;
+    c.r = (uint8_t)(stops[seg][0] + ((stops[seg + 1][0] - stops[seg][0]) * f) / 256);
+    c.g = (uint8_t)(stops[seg][1] + ((stops[seg + 1][1] - stops[seg][1]) * f) / 256);
+    c.b = (uint8_t)(stops[seg][2] + ((stops[seg + 1][2] - stops[seg][2]) * f) / 256);
+    c.alpha = 255;
+    return c;
+}
+
 /**
  * Fetch the last spectrum sweep.
  *
@@ -1553,6 +1588,17 @@ bool _ui_spectrumUpdate(ui_state_t *ui_state)
     ui_state->spec_sweeps = sweeps;
     if (sweeps == 0)
         return true;
+
+    // The sweep as a new waterfall row; a new range starts it again
+    if (first)
+        wf_count = 0;
+    wf_head = (wf_head + WF_ROWS - 1) % WF_ROWS;
+    for (int i = 0; i < SPECTRUM_POINTS; i++) {
+        rssi_t v = spec_raw[i];
+        wf[wf_head][i] = (int8_t)((v < -127) ? -127 : (v > 0) ? 0 : v);
+    }
+    if (wf_count < WF_ROWS)
+        wf_count++;
 
     rssi_t lo = 0;
     for (int i = 0; i < SPECTRUM_POINTS; i++) {
@@ -1644,9 +1690,10 @@ void _ui_drawSpectrum(ui_state_t *ui_state)
                   buf);
     }
 
-    // Graph area
+    // Graph area: the spectrum, then the waterfall under it
     const int16_t top = y + 3;
-    const int16_t bottom = CONFIG_SCREEN_HEIGHT - 2 * (fh + 2) - 2;
+    const int16_t wfBottom = CONFIG_SCREEN_HEIGHT - 2 * (fh + 2) - 2;
+    const int16_t bottom = top + (wfBottom - top) * 9 / 20;
     const int16_t height = bottom - top;
     const int16_t barW = CONFIG_SCREEN_WIDTH / SPECTRUM_POINTS;
     const int16_t x0 = (CONFIG_SCREEN_WIDTH - barW * SPECTRUM_POINTS) / 2;
@@ -1678,8 +1725,29 @@ void _ui_drawSpectrum(ui_state_t *ui_state)
         markerRssi = spec_rssi[ui_state->spec_marker];
     }
 
+    // Waterfall: one row per sweep, the newest at the top
+    const int16_t wfTop = bottom + 2;
+    int rows = wfBottom - wfTop;
+    if (rows > WF_ROWS)
+        rows = WF_ROWS;
+    if (rows > wf_count)
+        rows = wf_count;
+    const rssi_t wfLo = spec_floor + 3;
+    for (int row = 0; row < rows; row++) {
+        const int8_t *line = wf[(wf_head + row) % WF_ROWS];
+        const int16_t py = wfTop + row;
+        for (int i = 0; i < SPECTRUM_POINTS; i++) {
+            color_t c = _ui_wfColor(((line[i] - wfLo) * 256) / WF_RANGE);
+            for (int k = 0; k < barW; k++)
+                gfx_setPixel((point_t){ (int16_t)(x0 + barW * i + k), py }, c);
+        }
+    }
+    // Marker ticks on both sides of the waterfall
+    gfx_drawRect((point_t){ mx, wfTop - 2 }, barW, 2, yellow_fab413, true);
+    gfx_drawRect((point_t){ mx, wfBottom }, barW, 2, yellow_fab413, true);
+
     // Marker frequency and level
-    y = bottom + fh + 2;
+    y = wfBottom + fh + 2;
     _ui_spectrumFreq(buf, sizeof(buf), marker, step);
     gfx_print((point_t){ pad, y }, font, TEXT_ALIGN_LEFT, yellow_fab413, buf);
     if (ui_state->spec_sweeps > 0)
