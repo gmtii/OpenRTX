@@ -148,13 +148,20 @@ static bool flatMode(enum opmode mode)
 }
 
 /**
- * Receive only modes: TETRA and DMR, demodulated in software, and AM, for
- * the air band.
+ * Modes on the AM detector: AM voice and ACARS data, on the air band.
+ */
+static bool amMode(enum opmode mode)
+{
+    return (mode == OPMODE_AM) || (mode == OPMODE_ACARS);
+}
+
+/**
+ * Receive only modes: TETRA and DMR, demodulated in software, and the AM
+ * ones, for the air band.
  */
 static bool rxOnlyMode(enum opmode mode)
 {
-    return (mode == OPMODE_TETRA) || (mode == OPMODE_DMR)
-        || (mode == OPMODE_AM);
+    return (mode == OPMODE_TETRA) || (mode == OPMODE_DMR) || amMode(mode);
 }
 
 /*
@@ -389,6 +396,10 @@ void radio_setOpmode(const enum opmode mode)
     radio_disableAfOutput();
     amFixStop();
 
+    // ACARS used the flat audio path, without the voice filters
+    if (radioMode == OPMODE_ACARS)
+        bk4819_setFlatAudio(&c62_bk4819, false);
+
     if (flatMode(radioMode)) {
         for (size_t i = 0; i < ARRAY_SIZE(m17Fields); i++) {
             const auto &field = m17Fields[i];
@@ -420,7 +431,7 @@ void radio_enableAfOutput()
     if (flatMode(radioMode))
         BK4819_SetAF(&c62_bk4819, BK4819_AF_TYPE_BYPASS);
     else
-        bk4819_set_modulation(&c62_bk4819, radioMode != OPMODE_AM);
+        bk4819_set_modulation(&c62_bk4819, !amMode(radioMode));
 }
 
 void radio_disableAfOutput()
@@ -452,15 +463,19 @@ void radio_enableRx()
     } else {
         // AM: the air band carries narrow AM in 25 and 8.33 kHz channels,
         // the narrow filter keeps the neighbours out
-        bk4819_SetFilterBandwidth(&c62_bk4819, (radioMode == OPMODE_AM) ?
-                                                   BW_12_5 :
-                                                   config->bandwidth);
+        bk4819_SetFilterBandwidth(
+            &c62_bk4819, amMode(radioMode) ? BW_12_5 : config->bandwidth);
         if (config->rxToneEn)
             bk4819_enable_rx_ctcss(&c62_bk4819, config->rxTone);
     }
 
+    // ACARS: no voice band-pass or de-emphasis, the 2400 Hz tone sits on
+    // their edge
+    if (radioMode == OPMODE_ACARS)
+        bk4819_setFlatAudio(&c62_bk4819, true);
+
     // AM: a new channel starts again from full gain
-    if (radioMode == OPMODE_AM)
+    if (amMode(radioMode))
         amFixStart();
 
     bk4819_rx_on(&c62_bk4819);
@@ -618,8 +633,7 @@ rssi_t radio_spectrumProbe(const freq_t freq)
     if (vhf != specVhf) {
         gpioDev_clear(&c62_bk4819_gpio, GPIO_VHF_RX_LNA);
         gpioDev_clear(&c62_bk4819_gpio, GPIO_UHF_RX_LNA);
-        gpioDev_set(&c62_bk4819_gpio,
-                    vhf ? GPIO_VHF_RX_LNA : GPIO_UHF_RX_LNA);
+        gpioDev_set(&c62_bk4819_gpio, vhf ? GPIO_VHF_RX_LNA : GPIO_UHF_RX_LNA);
         specVhf = vhf;
     }
 
