@@ -25,7 +25,11 @@
 #define UI_BSS
 #endif
 
-#if defined(CONFIG_TETRA) || defined(CONFIG_SPECTRUM)
+#ifdef CONFIG_ACARS
+#include "protocols/ACARS/Acars.h"
+#endif
+
+#if defined(CONFIG_TETRA) || defined(CONFIG_SPECTRUM) || defined(CONFIG_ACARS)
 /* Secondary text of the information pages: color_grey is too dark on black */
 static const color_t info_grey = { 160, 160, 160, 255 };
 #endif
@@ -561,6 +565,13 @@ void _ui_drawModeInfo(ui_state_t* ui_state)
                       color_white, "AM");
             break;
         #endif
+
+        #ifdef CONFIG_ACARS
+        case OPMODE_ACARS:
+            gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
+                      color_white, "ACARS");
+            break;
+        #endif
     }
 }
 
@@ -670,6 +681,9 @@ void _ui_drawMainBottom()
         case OPMODE_FM:
         #ifdef CONFIG_AM
         case OPMODE_AM:
+        #endif
+        #ifdef CONFIG_ACARS
+        case OPMODE_ACARS:
         #endif
             gfx_drawSmeter(meter_pos,
                            meter_width,
@@ -824,6 +838,9 @@ static void _ui_drawTetraSds(ui_state_t *ui_state)
 
 #ifdef CONFIG_UI_RICH_MAIN
 static void _ui_drawRichMain(ui_state_t *ui_state, bool mem);
+#ifdef CONFIG_ACARS
+static bool _ui_drawAcarsPage(ui_state_t *ui_state);
+#endif
 #endif
 
 #ifdef CONFIG_TETRA
@@ -1380,6 +1397,11 @@ void _ui_drawMainVFO(ui_state_t* ui_state)
 {
     gfx_clearScreen();
 
+    #if defined(CONFIG_UI_RICH_MAIN) && defined(CONFIG_ACARS)
+    if(_ui_drawAcarsPage(ui_state))
+        return;
+    #endif
+
     #ifdef CONFIG_TETRA
     if(_ui_drawTetraPage(ui_state))
         return;
@@ -1420,6 +1442,11 @@ void _ui_drawMainVFOInput(ui_state_t* ui_state)
 void _ui_drawMainMEM(ui_state_t* ui_state)
 {
     gfx_clearScreen();
+
+    #if defined(CONFIG_UI_RICH_MAIN) && defined(CONFIG_ACARS)
+    if(_ui_drawAcarsPage(ui_state))
+        return;
+    #endif
 
     #ifdef CONFIG_TETRA
     if(_ui_drawTetraPage(ui_state))
@@ -1696,6 +1723,14 @@ static color_t _ui_richModeColor(const char **name)
             *name = "AM";
             return yellow_fab413;
         #endif
+        #ifdef CONFIG_ACARS
+        case OPMODE_ACARS:
+        {
+            static const color_t sky = { 95, 176, 255, 255 };
+            *name = "ACARS";
+            return sky;
+        }
+        #endif
         #ifdef CONFIG_M17
         case OPMODE_M17:
             *name = "M17";
@@ -1922,6 +1957,16 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
                                       rich_red, false);
     }
     #endif
+    #ifdef CONFIG_ACARS
+    else if(last_state.channel.mode == OPMODE_ACARS)
+    {
+        struct acarsStats st;
+        acars_getStats(&st);
+        if(st.inFrame)
+            x = _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "DATA", rich_green,
+                              true);
+    }
+    #endif
     else if(rtx_rxSquelchOpen())
         x = _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "RX", rich_green, true);
 
@@ -1965,6 +2010,9 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
         #endif
         #ifdef CONFIG_AM
             || last_state.channel.mode == OPMODE_AM
+        #endif
+        #ifdef CONFIG_ACARS
+            || last_state.channel.mode == OPMODE_ACARS
         #endif
             || last_state.channel.mode == OPMODE_DMR)
     {
@@ -2065,7 +2113,7 @@ static void _ui_richAnalog(bool mem)
                   "%d dBm", (int)last_state.rssi);
 }
 
-#ifdef CONFIG_TETRA
+#if defined(CONFIG_TETRA) || defined(CONFIG_ACARS)
 /**
  * Text on one line of a given width: as it is if it fits, else scrolling
  * left one character every 150 ms, after a second at its start. Never
@@ -2119,6 +2167,131 @@ static void _ui_richScroll(int16_t x, int16_t y, int16_t w, fontSize_t font,
     }
 }
 
+#endif
+
+#ifdef CONFIG_ACARS
+/**
+ * Time since a tick: "12s", "5m", "2h".
+ */
+static void _ui_acarsAgo(char *buf, size_t len, long long tick)
+{
+    long age = (long)((getTick() - tick) / 1000);
+    if(age < 60)
+        sniprintf(buf, len, "%lds", age);
+    else if(age < 3600)
+        sniprintf(buf, len, "%ldm", age / 60);
+    else
+        sniprintf(buf, len, "%ldh", age / 3600);
+}
+
+/**
+ * ACARS: messages and errors, the frequency, and the last message:
+ * registration, flight, label, age and its text scrolling.
+ */
+static void _ui_richAcars(void)
+{
+    static const color_t sky = { 95, 176, 255, 255 };
+    struct acarsStats st;
+    acars_getStats(&st);
+    const int16_t y = RICH_INFO_Y;
+
+    int16_t x = _ui_richMemTag(y);
+    _ui_richPrint(x, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, color_white,
+                  "Msgs %lu", (unsigned long)st.frames);
+    _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, rich_grey,
+                  "bad %lu", (unsigned long)st.crcErrors);
+
+    _ui_richFrequency(33);
+
+    struct acarsMsg m;
+    const int16_t ly = 57, by = 68;
+    gfx_drawRect((point_t){ RICH_PAD, by }, CONFIG_SCREEN_WIDTH - 2 * RICH_PAD,
+                 17, rich_dark, false);
+    if(acars_get(&m, 1) == 0)
+    {
+        _ui_richPrint(RICH_PAD, ly, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                      "Listening, %lu syncs", (unsigned long)st.syncs);
+        _ui_richPrint(RICH_PAD + 3, by + 4, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      rich_grey, "No message yet");
+    }
+    else
+    {
+        char ago[8];
+        _ui_acarsAgo(ago, sizeof(ago), m.tick);
+        uint16_t w = _ui_richPrint(RICH_PAD, ly, FONT_SIZE_6PT,
+                                   TEXT_ALIGN_LEFT, color_white, "%s",
+                                   m.address[0] ? m.address : "-");
+        if(m.flight[0] != '\0')
+            _ui_richPrint(RICH_PAD + w + 5, ly, FONT_SIZE_6PT,
+                          TEXT_ALIGN_LEFT, yellow_fab413, "%s", m.flight);
+        _ui_richPrint(RICH_PAD, ly, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, sky,
+                      "%s %s", m.label, ago);
+
+        const char *name = acars_labelName(m.label);
+        _ui_richScroll(RICH_PAD + 3, by + 4,
+                       CONFIG_SCREEN_WIDTH - 2 * RICH_PAD - 6, FONT_SIZE_6PT,
+                       color_white,
+                       m.text[0] ? m.text : (name ? name : "(no text)"));
+    }
+
+    _ui_richMeter(89, sky, false, false);
+}
+
+/**
+ * ACARS message page, in place of the VFO or memory screen: one message
+ * of the history whole, UP and DOWN to go through them.
+ *
+ * @return true if it was drawn.
+ */
+static bool _ui_drawAcarsPage(ui_state_t *ui_state)
+{
+    if((last_state.channel.mode != OPMODE_ACARS) || !ui_state->acars_page)
+        return false;
+
+    static UI_BSS struct acarsMsg list[ACARS_MAX_MSGS];
+    int n = acars_get(list, ACARS_MAX_MSGS);
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = 11;
+    point_t pos = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
+
+    _ui_drawMainTop(ui_state);
+    if(n == 0)
+    {
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "ACARS");
+        pos.y += 2 * step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "No message yet");
+        return true;
+    }
+    if(ui_state->acars_sel >= n)
+        ui_state->acars_sel = n - 1;
+    const struct acarsMsg *m = &list[ui_state->acars_sel];
+
+    char ago[8];
+    _ui_acarsAgo(ago, sizeof(ago), m->tick);
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "ACARS %d/%d",
+              ui_state->acars_sel + 1, n);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, yellow_fab413, "%s ago", ago);
+
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s %s",
+              m->address[0] ? m->address : "-", m->flight);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey, "%s, blk %c",
+              m->downlink ? "down" : "up", m->blockId);
+
+    const char *name = acars_labelName(m->label);
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s %s%s", m->label,
+              name ? name : "", m->repaired ? ", fixed" : "");
+
+    // The text, wrapped over the rest of the screen
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s",
+              m->text[0] ? m->text : "(no text)");
+    return true;
+}
+#endif
+
+#ifdef CONFIG_TETRA
 /**
  * TETRA: the cell, the frequency, the signal quality and the last SDS, or
  * the call in a card.
@@ -2423,6 +2596,11 @@ static void _ui_drawRichMain(ui_state_t *ui_state, bool mem)
         #ifdef CONFIG_M17
         case OPMODE_M17:
             _ui_richM17(ui_state);
+            return;
+        #endif
+        #ifdef CONFIG_ACARS
+        case OPMODE_ACARS:
+            _ui_richAcars();
             return;
         #endif
         default:

@@ -254,6 +254,11 @@ typedef struct ui_state_t
 #if defined(CONFIG_UI_NO_KEYBOARD)
     uint8_t macro_menu_selected;
 #endif // UI_NO_KEYBOARD
+#ifdef CONFIG_ACARS
+    // ACARS message page on the VFO screen (*), message shown
+    bool acars_page;
+    uint8_t acars_sel;
+#endif
 #ifdef CONFIG_UI_SAVE_CHANNEL
     // Save VFO screen: # pressed once on a memory, again deletes it
     bool save_delete_armed;

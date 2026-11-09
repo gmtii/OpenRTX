@@ -65,6 +65,9 @@
 #include "hwconfig.h"
 #include "core/voicePromptUtils.h"
 #include "core/beeps.h"
+#ifdef CONFIG_ACARS
+#include "protocols/ACARS/Acars.h"
+#endif
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraSds.h"
@@ -1180,6 +1183,48 @@ static void _ui_fsm_channelSave(kbd_msg_t msg)
 }
 #endif
 
+#ifdef CONFIG_ACARS
+/**
+ * ACARS message page of the VFO and memory screens: * opens and closes it,
+ * UP/DOWN go through the messages, ESC leaves it.
+ *
+ * @return true if the key was taken.
+ */
+static bool _ui_fsm_acarsPage(kbd_msg_t msg)
+{
+    if(state.channel.mode != OPMODE_ACARS)
+        return false;
+
+    if(msg.keys & KEY_STAR)
+    {
+        ui_state.acars_page = !ui_state.acars_page;
+        ui_state.acars_sel = 0;
+        return true;
+    }
+    if(!ui_state.acars_page)
+        return false;
+
+    if(msg.keys & (KEY_UP | KNOB_RIGHT))
+    {
+        if(ui_state.acars_sel > 0)
+            ui_state.acars_sel--;
+        return true;
+    }
+    if(msg.keys & (KEY_DOWN | KNOB_LEFT))
+    {
+        if(ui_state.acars_sel + 1 < ACARS_MAX_MSGS)
+            ui_state.acars_sel++;
+        return true;
+    }
+    if(msg.keys & KEY_ESC)
+    {
+        ui_state.acars_page = false;
+        return true;
+    }
+    return false;
+}
+#endif
+
 #ifdef CONFIG_TETRA
 /**
  * TETRA pages of the VFO and memory screens: * cycles them, UP/DOWN browse
@@ -1357,6 +1402,9 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
                     #endif
                     #ifdef CONFIG_AM
                     OPMODE_AM,
+                    #endif
+                    #ifdef CONFIG_ACARS
+                    OPMODE_ACARS,
                     #endif
                 };
                 size_t next = 0; // Invalid states go back to FM
@@ -1949,6 +1997,13 @@ void ui_updateFSM(bool *sync_rtx)
                     }
                     else
 #endif
+#ifdef CONFIG_ACARS
+                    // ACARS message page
+                    if(_ui_fsm_acarsPage(msg))
+                    {
+                    }
+                    else
+#endif
                     if(msg.keys & KEY_ENTER)
                     {
                         // Save current main state
@@ -2181,6 +2236,13 @@ void ui_updateFSM(bool *sync_rtx)
 #ifdef CONFIG_TETRA
                     // TETRA pages: *, and the SDS page's keys
                     if(_ui_fsm_tetraPages(msg))
+                    {
+                    }
+                    else
+#endif
+#ifdef CONFIG_ACARS
+                    // ACARS message page
+                    if(_ui_fsm_acarsPage(msg))
                     {
                     }
                     else
