@@ -231,6 +231,13 @@ if(C62_ACARS)
   target_compile_definitions(app PRIVATE CONFIG_ACARS)
 endif()
 
+# C62_FM_BROADCAST: broadcast FM radio on the BK1080 (MONI + # on the VFO
+#   or memory screen); its audio goes to the speaker amplifier directly.
+option(C62_FM_BROADCAST "Broadcast FM radio" ON)
+if(C62_FM_BROADCAST)
+  target_compile_definitions(app PRIVATE CONFIG_FM_BROADCAST)
+endif()
+
 if(C62_AIS)
   target_sources(app PRIVATE
     ${OPENRTX_ROOT}/openrtx/src/protocols/AIS/Ais.c
@@ -256,7 +263,7 @@ endif()
 
 message(STATUS "C62: wide RX ${C62_WIDE_RX}, TETRA ${C62_TETRA} "
                "(speech ${C62_TETRA_SPEECH}), DMR ${c62_dmr_status}, "
-               "AM ${C62_AM}, ACARS ${C62_ACARS}, AIS ${C62_AIS}, spectrum ${C62_SPECTRUM}, rich UI ${C62_RICH_UI}, "
+               "AM ${C62_AM}, ACARS ${C62_ACARS}, AIS ${C62_AIS}, FM radio ${C62_FM_BROADCAST}, spectrum ${C62_SPECTRUM}, rich UI ${C62_RICH_UI}, "
                "REG_43 sweep ${C62_REG43_SWEEP}, "
                "baseband dump ${C62_BASEBAND_DUMP} "
                "(${C62_BASEBAND_DUMP_BAUD} baud, format "
