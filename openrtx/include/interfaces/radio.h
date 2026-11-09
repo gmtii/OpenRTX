@@ -123,6 +123,43 @@ rssi_t radio_spectrumProbe(const freq_t freq);
 void radio_spectrumEnd();
 
 /**
+ * Broadcast FM receiver, on radios with one (CONFIG_FM_BROADCAST). The
+ * main receiver is off meanwhile; the broadcast audio goes to the speaker.
+ * Called from the RTX thread.
+ *
+ * @param freq: frequency in Hz, 87.5 to 108 MHz.
+ * @param volume: 0 to 15.
+ */
+void radio_broadcastOn(const freq_t freq, const uint8_t volume);
+
+/**
+ * Tune the broadcast receiver.
+ *
+ * @param freq: frequency in Hz, 87.5 to 108 MHz.
+ */
+void radio_broadcastTune(const freq_t freq);
+
+/**
+ * Set the broadcast receiver volume, 0 (silent) to 15.
+ */
+void radio_broadcastVolume(const uint8_t volume);
+
+/**
+ * Signal of the broadcast station tuned.
+ *
+ * @param rssi: signal strength, 0 to 255 (chip units).
+ * @param snr: signal to noise ratio, 0 to 15 (chip units).
+ * @return true if a station is tuned (strong enough, centred), as a seek
+ * stops on.
+ */
+bool radio_broadcastStatus(uint8_t *rssi, uint8_t *snr);
+
+/**
+ * Turn the broadcast receiver off and free the speaker.
+ */
+void radio_broadcastOff();
+
+/**
  * Get the current operating status of the radio module.
  *
  * @return current operating status.

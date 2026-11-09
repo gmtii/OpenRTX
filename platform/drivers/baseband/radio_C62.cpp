@@ -658,6 +658,64 @@ void radio_spectrumEnd()
 }
 #endif
 
+#ifdef CONFIG_FM_BROADCAST
+/*
+ * Broadcast FM on the BK1080, whose audio goes to the speaker amplifier
+ * directly: the BK4819 is off meanwhile and the speaker held on.
+ */
+#include "drivers/baseband/BK1080.h"
+#include "drivers/I2C/i2c_bitbang.h"
+
+static bool bk1080Bus; // I2C bus initialised
+
+void radio_broadcastOn(const freq_t freq, const uint8_t volume)
+{
+    radio_disableRtx();
+    radio_disableAfOutput();
+    if (!bk1080Bus) {
+        i2cBitbang_init(c62_bk1080.i2c);
+        bk1080Bus = true;
+    }
+    BK1080_Init(&c62_bk1080, freq, 0);
+    radio_broadcastVolume(volume);
+    audio_c62_holdSpeaker(true);
+}
+
+void radio_broadcastTune(const freq_t freq)
+{
+    BK1080_SetFrequency(&c62_bk1080, freq, 0);
+}
+
+void radio_broadcastVolume(const uint8_t volume)
+{
+    uint16_t r = BK1080_ReadRegister(&c62_bk1080,
+                                     BK1080_REG_05_SYSTEM_CONFIGURATION2);
+    r = (r & ~0x000f) | (volume & 0x0f);
+    BK1080_WriteRegister(&c62_bk1080, BK1080_REG_05_SYSTEM_CONFIGURATION2, r);
+}
+
+bool radio_broadcastStatus(uint8_t *rssi, uint8_t *snr)
+{
+    uint16_t r7 = BK1080_ReadRegister(&c62_bk1080, BK1080_REG_07);
+    uint16_t r10 = BK1080_ReadRegister(&c62_bk1080, BK1080_REG_10);
+    *rssi = (uint8_t)BK1080_REG_10_GET_RSSI(r10);
+    *snr = (uint8_t)BK1080_REG_07_GET_SNR(r7);
+
+    // A station, as the UV-K5 firmware seeks: some SNR and level, the AFC
+    // not railed, the frequency error (12 bits, signed) near zero
+    uint16_t dev = BK1080_REG_07_GET_FREQD(r7);
+    bool railed = (r10 & BK1080_REG_10_MASK_AFCRL) != 0;
+    return (*snr > 2) && (*rssi >= 10) && !railed
+        && ((dev < 280) || (dev > 3815));
+}
+
+void radio_broadcastOff()
+{
+    audio_c62_holdSpeaker(false);
+    BK1080_Init(&c62_bk1080, 0, 0); // Power down
+}
+#endif
+
 enum opstatus radio_getStatus()
 {
     return radioStatus;
