@@ -1361,6 +1361,11 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
             gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          ACARS");
             break;
 #endif
+#ifdef CONFIG_AIS
+        case OPMODE_AIS:
+            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          AIS");
+            break;
+#endif
     }
 
     gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER,

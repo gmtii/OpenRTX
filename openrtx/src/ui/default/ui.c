@@ -68,6 +68,9 @@
 #ifdef CONFIG_ACARS
 #include "protocols/ACARS/Acars.h"
 #endif
+#ifdef CONFIG_AIS
+#include "protocols/AIS/Ais.h"
+#endif
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraStatus.h"
@@ -1226,6 +1229,48 @@ static bool _ui_fsm_acarsPage(kbd_msg_t msg)
 }
 #endif
 
+#ifdef CONFIG_AIS
+/**
+ * AIS station page of the VFO and memory screens: * opens and closes it,
+ * UP/DOWN go through the stations, ESC leaves it.
+ *
+ * @return true if the key was taken.
+ */
+static bool _ui_fsm_aisPage(kbd_msg_t msg)
+{
+    if(state.channel.mode != OPMODE_AIS)
+        return false;
+
+    if(msg.keys & KEY_STAR)
+    {
+        ui_state.ais_page = !ui_state.ais_page;
+        ui_state.ais_sel = 0;
+        return true;
+    }
+    if(!ui_state.ais_page)
+        return false;
+
+    if(msg.keys & (KEY_UP | KNOB_RIGHT))
+    {
+        if(ui_state.ais_sel > 0)
+            ui_state.ais_sel--;
+        return true;
+    }
+    if(msg.keys & (KEY_DOWN | KNOB_LEFT))
+    {
+        if(ui_state.ais_sel + 1 < AIS_MAX_SHIPS)
+            ui_state.ais_sel++;
+        return true;
+    }
+    if(msg.keys & KEY_ESC)
+    {
+        ui_state.ais_page = false;
+        return true;
+    }
+    return false;
+}
+#endif
+
 #ifdef CONFIG_TETRA
 extern uint32_t _ui_tetraGroupAt(int i);
 
@@ -1417,6 +1462,9 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
                     #endif
                     #ifdef CONFIG_ACARS
                     OPMODE_ACARS,
+                    #endif
+                    #ifdef CONFIG_AIS
+                    OPMODE_AIS,
                     #endif
                 };
                 size_t next = 0; // Invalid states go back to FM
@@ -2016,6 +2064,13 @@ void ui_updateFSM(bool *sync_rtx)
                     }
                     else
 #endif
+#ifdef CONFIG_AIS
+                    // AIS station page
+                    if(_ui_fsm_aisPage(msg))
+                    {
+                    }
+                    else
+#endif
                     if(msg.keys & KEY_ENTER)
                     {
                         // Save current main state
@@ -2255,6 +2310,13 @@ void ui_updateFSM(bool *sync_rtx)
 #ifdef CONFIG_ACARS
                     // ACARS message page
                     if(_ui_fsm_acarsPage(msg))
+                    {
+                    }
+                    else
+#endif
+#ifdef CONFIG_AIS
+                    // AIS station page
+                    if(_ui_fsm_aisPage(msg))
                     {
                     }
                     else

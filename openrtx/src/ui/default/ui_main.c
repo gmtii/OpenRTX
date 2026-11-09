@@ -28,8 +28,12 @@
 #ifdef CONFIG_ACARS
 #include "protocols/ACARS/Acars.h"
 #endif
+#ifdef CONFIG_AIS
+#include "protocols/AIS/Ais.h"
+#endif
 
-#if defined(CONFIG_TETRA) || defined(CONFIG_SPECTRUM) || defined(CONFIG_ACARS)
+#if defined(CONFIG_TETRA) || defined(CONFIG_SPECTRUM) || defined(CONFIG_ACARS) \
+    || defined(CONFIG_AIS)
 /* Secondary text of the information pages: color_grey is too dark on black */
 static const color_t info_grey = { 160, 160, 160, 255 };
 #endif
@@ -572,6 +576,13 @@ void _ui_drawModeInfo(ui_state_t* ui_state)
                       color_white, "ACARS");
             break;
         #endif
+
+        #ifdef CONFIG_AIS
+        case OPMODE_AIS:
+            gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
+                      color_white, "AIS");
+            break;
+        #endif
     }
 }
 
@@ -684,6 +695,9 @@ void _ui_drawMainBottom()
         #endif
         #ifdef CONFIG_ACARS
         case OPMODE_ACARS:
+        #endif
+        #ifdef CONFIG_AIS
+        case OPMODE_AIS:
         #endif
             gfx_drawSmeter(meter_pos,
                            meter_width,
@@ -842,12 +856,12 @@ static void _ui_drawRichMain(ui_state_t *ui_state, bool mem);
 #ifdef CONFIG_ACARS
 static bool _ui_drawAcarsPage(ui_state_t *ui_state);
 #endif
+#ifdef CONFIG_AIS
+static bool _ui_drawAisPage(ui_state_t *ui_state);
+#endif
 #endif
 
-#ifdef CONFIG_TETRA
-/* Rows of the groups and radios pages */
-#define HEARD_ROWS 6
-
+#if defined(CONFIG_TETRA) || defined(CONFIG_ACARS) || defined(CONFIG_AIS)
 /**
  * Time since a tick: "12s", "5m", "2h".
  */
@@ -861,6 +875,11 @@ static void _ui_ago(char *buf, size_t len, long long tick)
     else
         sniprintf(buf, len, "%ldh", age / 3600);
 }
+#endif
+
+#ifdef CONFIG_TETRA
+/* Rows of the groups and radios pages */
+#define HEARD_ROWS 6
 
 /**
  * Header and rows of a list page; the picked row highlighted, the list
@@ -1430,6 +1449,10 @@ void _ui_drawMainVFO(ui_state_t* ui_state)
     if(_ui_drawAcarsPage(ui_state))
         return;
     #endif
+    #if defined(CONFIG_UI_RICH_MAIN) && defined(CONFIG_AIS)
+    if(_ui_drawAisPage(ui_state))
+        return;
+    #endif
 
     #ifdef CONFIG_TETRA
     if(_ui_drawTetraPage(ui_state))
@@ -1474,6 +1497,10 @@ void _ui_drawMainMEM(ui_state_t* ui_state)
 
     #if defined(CONFIG_UI_RICH_MAIN) && defined(CONFIG_ACARS)
     if(_ui_drawAcarsPage(ui_state))
+        return;
+    #endif
+    #if defined(CONFIG_UI_RICH_MAIN) && defined(CONFIG_AIS)
+    if(_ui_drawAisPage(ui_state))
         return;
     #endif
 
@@ -1691,6 +1718,9 @@ static const color_t rich_red    = { 224,  72,  72, 255 };
 static const color_t rich_orange = { 255, 140,  64, 255 };
 static const color_t rich_teal   = {  47, 179, 196, 255 };
 static const color_t rich_violet = { 185, 163, 255, 255 };
+#ifdef CONFIG_AIS
+static const color_t ais_teal    = {  72, 208, 150, 255 };
+#endif
 
 /**
  * Height of the digits and capitals of a font: gfx_getFontHeight() also
@@ -1759,6 +1789,11 @@ static color_t _ui_richModeColor(const char **name)
             *name = "ACARS";
             return sky;
         }
+        #endif
+        #ifdef CONFIG_AIS
+        case OPMODE_AIS:
+            *name = "AIS";
+            return ais_teal;
         #endif
         #ifdef CONFIG_M17
         case OPMODE_M17:
@@ -2000,6 +2035,14 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
                               true);
     }
     #endif
+    #ifdef CONFIG_AIS
+    else if(last_state.channel.mode == OPMODE_AIS)
+    {
+        if(rtx_rxSquelchOpen())
+            x = _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "DATA", rich_green,
+                              true);
+    }
+    #endif
     else if(rtx_rxSquelchOpen())
         x = _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "RX", rich_green, true);
 
@@ -2046,6 +2089,9 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
         #endif
         #ifdef CONFIG_ACARS
             || last_state.channel.mode == OPMODE_ACARS
+        #endif
+        #ifdef CONFIG_AIS
+            || last_state.channel.mode == OPMODE_AIS
         #endif
             || last_state.channel.mode == OPMODE_DMR)
     {
@@ -2146,7 +2192,7 @@ static void _ui_richAnalog(bool mem)
                   "%d dBm", (int)last_state.rssi);
 }
 
-#if defined(CONFIG_TETRA) || defined(CONFIG_ACARS)
+#if defined(CONFIG_TETRA) || defined(CONFIG_ACARS) || defined(CONFIG_AIS)
 /**
  * Text on one line of a given width: as it is if it fits, else scrolling
  * left one character every 150 ms, after a second at its start. Never
@@ -2204,20 +2250,6 @@ static void _ui_richScroll(int16_t x, int16_t y, int16_t w, fontSize_t font,
 
 #ifdef CONFIG_ACARS
 /**
- * Time since a tick: "12s", "5m", "2h".
- */
-static void _ui_acarsAgo(char *buf, size_t len, long long tick)
-{
-    long age = (long)((getTick() - tick) / 1000);
-    if(age < 60)
-        sniprintf(buf, len, "%lds", age);
-    else if(age < 3600)
-        sniprintf(buf, len, "%ldm", age / 60);
-    else
-        sniprintf(buf, len, "%ldh", age / 3600);
-}
-
-/**
  * ACARS: messages and errors, the frequency, and the last message:
  * registration, flight, label, age and its text scrolling.
  */
@@ -2250,7 +2282,7 @@ static void _ui_richAcars(void)
     else
     {
         char ago[8];
-        _ui_acarsAgo(ago, sizeof(ago), m.tick);
+        _ui_ago(ago, sizeof(ago), m.tick);
         uint16_t w = _ui_richPrint(RICH_PAD, ly, FONT_SIZE_6PT,
                                    TEXT_ALIGN_LEFT, color_white, "%s",
                                    m.address[0] ? m.address : "-");
@@ -2300,7 +2332,7 @@ static bool _ui_drawAcarsPage(ui_state_t *ui_state)
     const struct acarsMsg *m = &list[ui_state->acars_sel];
 
     char ago[8];
-    _ui_acarsAgo(ago, sizeof(ago), m->tick);
+    _ui_ago(ago, sizeof(ago), m->tick);
     gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "ACARS %d/%d",
               ui_state->acars_sel + 1, n);
     gfx_print(pos, font, TEXT_ALIGN_RIGHT, yellow_fab413, "%s ago", ago);
@@ -2320,6 +2352,230 @@ static bool _ui_drawAcarsPage(ui_state_t *ui_state)
     pos.y += step;
     gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s",
               m->text[0] ? m->text : "(no text)");
+    return true;
+}
+#endif
+
+#ifdef CONFIG_AIS
+/**
+ * A latitude or longitude in 1/10000 minute as degrees with four decimals
+ * and a hemisphere letter: "48.8566N".
+ */
+static void _ui_aisCoord(char *buf, size_t len, int32_t v, char pos, char neg)
+{
+    long long a = (v < 0) ? -(long long)v : v;
+    unsigned deg = (unsigned)(a / 600000);
+    unsigned frac = (unsigned)((a % 600000) * 10000 / 600000);
+    sniprintf(buf, len, "%u.%04u%c", deg, frac, (v < 0) ? neg : pos);
+}
+
+/**
+ * The name of a station, its MMSI until a static report names it.
+ */
+static void _ui_aisName(char *buf, size_t len, const struct aisShip *s)
+{
+    if(s->name[0] != '\0')
+        sniprintf(buf, len, "%s", s->name);
+    else
+        sniprintf(buf, len, "%09lu", (unsigned long)s->mmsi);
+}
+
+/**
+ * One line with what is known of a station's position and voyage.
+ */
+static void _ui_aisSummary(char *buf, size_t len, const struct aisShip *s)
+{
+    size_t o = 0;
+    buf[0] = '\0';
+    if(s->posValid)
+    {
+        char lat[16], lon[16];
+        _ui_aisCoord(lat, sizeof(lat), s->lat, 'N', 'S');
+        _ui_aisCoord(lon, sizeof(lon), s->lon, 'E', 'W');
+        o += sniprintf(buf + o, len - o, "%s %s  ", lat, lon);
+    }
+    if(o < len && s->sog < 1023)
+        o += sniprintf(buf + o, len - o, "%u.%ukn ", s->sog / 10, s->sog % 10);
+    if(o < len && s->cog < 3600)
+        o += sniprintf(buf + o, len - o, "%03u ", s->cog / 10);
+    const char *st = ais_navStatusName(s->navStatus);
+    if(o < len && st != NULL)
+        o += sniprintf(buf + o, len - o, " %s ", st);
+    if(o < len && s->destination[0] != '\0')
+        o += sniprintf(buf + o, len - o, " >%s", s->destination);
+    if(o == 0)
+        sniprintf(buf, len, "Message %u", s->msgType);
+}
+
+static const char *_ui_aisClass(uint8_t cls)
+{
+    static const char *const names[] = { "Class A", "Class B", "Base",
+                                         "AtoN",    "SAR",     "Station" };
+    return (cls < 6) ? names[cls] : "";
+}
+
+/**
+ * AIS: stations and reports, the frequency, and the newest station: its
+ * name, class, age and position and voyage scrolling.
+ */
+static void _ui_richAis(void)
+{
+    struct aisStats st;
+    ais_getStats(&st);
+    const int16_t y = RICH_INFO_Y;
+
+    int16_t x = _ui_richMemTag(y);
+    x += _ui_richPrint(x, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, color_white,
+                       "Ships %lu", (unsigned long)st.ships);
+
+    // Reports and bad frames at the right, shorter if they do not fit
+    char counts[24];
+    const int16_t room = CONFIG_SCREEN_WIDTH - RICH_PAD - x - 6;
+    sniprintf(counts, sizeof(counts), "rx %lu bad %lu",
+              (unsigned long)st.frames, (unsigned long)st.crcErrors);
+    if(gfx_getTextWidth(FONT_SIZE_6PT, counts) > room)
+        sniprintf(counts, sizeof(counts), "%lu/%lu", (unsigned long)st.frames,
+                  (unsigned long)st.crcErrors);
+    _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, rich_grey,
+                  "%s", counts);
+
+    _ui_richFrequency(33);
+
+    struct aisShip s;
+    const int16_t ly = 57, by = 68;
+    gfx_drawRect((point_t){ RICH_PAD, by }, CONFIG_SCREEN_WIDTH - 2 * RICH_PAD,
+                 17, rich_dark, false);
+    if(ais_get(&s, 1) == 0)
+    {
+        _ui_richPrint(RICH_PAD, ly, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                      "Listening, %lu syncs", (unsigned long)st.syncs);
+        _ui_richPrint(RICH_PAD + 3, by + 4, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      rich_grey, "No station yet");
+    }
+    else
+    {
+        char ago[8], name[24], line[96];
+        _ui_ago(ago, sizeof(ago), s.tick);
+        _ui_aisName(name, sizeof(name), &s);
+        char tag[16];
+        sniprintf(tag, sizeof(tag), "%s %s", _ui_aisClass(s.cls), ago);
+        // The name, cut to leave room for the tag (one scrolling text per
+        // screen: _ui_richScroll() has a single state)
+        int16_t room = CONFIG_SCREEN_WIDTH - 2 * RICH_PAD - 4
+                     - gfx_getTextWidth(FONT_SIZE_6PT, tag);
+        size_t nl = strlen(name);
+        while(nl > 0 && gfx_getTextWidth(FONT_SIZE_6PT, name) > room)
+            name[--nl] = '\0';
+        _ui_richPrint(RICH_PAD, ly, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      color_white, "%s", name);
+        _ui_richPrint(RICH_PAD, ly, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, ais_teal,
+                      "%s", tag);
+
+        _ui_aisSummary(line, sizeof(line), &s);
+        _ui_richScroll(RICH_PAD + 3, by + 4,
+                       CONFIG_SCREEN_WIDTH - 2 * RICH_PAD - 6, FONT_SIZE_6PT,
+                       color_white, line);
+    }
+
+    _ui_richMeter(89, ais_teal, false, false);
+}
+
+/**
+ * AIS station page, in place of the VFO or memory screen: one station of
+ * the table whole, UP and DOWN to go through them, newest first.
+ *
+ * @return true if it was drawn.
+ */
+static bool _ui_drawAisPage(ui_state_t *ui_state)
+{
+    if((last_state.channel.mode != OPMODE_AIS) || !ui_state->ais_page)
+        return false;
+
+    static UI_BSS struct aisShip list[AIS_MAX_SHIPS];
+    int n = ais_get(list, AIS_MAX_SHIPS);
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = 11;
+    point_t pos = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
+
+    _ui_drawMainTop(ui_state);
+    if(n == 0)
+    {
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "AIS");
+        pos.y += 2 * step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "No station yet");
+        return true;
+    }
+    if(ui_state->ais_sel >= n)
+        ui_state->ais_sel = n - 1;
+    const struct aisShip *s = &list[ui_state->ais_sel];
+
+    char ago[8], buf[48];
+    _ui_ago(ago, sizeof(ago), s->tick);
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "AIS %d/%d",
+              ui_state->ais_sel + 1, n);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, yellow_fab413, "%s ago", ago);
+
+    pos.y += step;
+    _ui_aisName(buf, sizeof(buf), s);
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%.20s", buf);
+
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%09lu",
+              (unsigned long)s->mmsi);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, ais_teal, "%s %s",
+              _ui_aisClass(s->cls), s->callsign);
+
+    if(s->posValid)
+    {
+        char lat[16], lon[16];
+        _ui_aisCoord(lat, sizeof(lat), s->lat, 'N', 'S');
+        _ui_aisCoord(lon, sizeof(lon), s->lon, 'E', 'W');
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s %s", lat, lon);
+    }
+
+    size_t o = 0;
+    buf[0] = '\0';
+    if(s->sog < 1023)
+        o += sniprintf(buf + o, sizeof(buf) - o, "SOG %u.%ukn ", s->sog / 10,
+                       s->sog % 10);
+    if(o < sizeof(buf) && s->cog < 3600)
+        o += sniprintf(buf + o, sizeof(buf) - o, "COG %03u ", s->cog / 10);
+    if(o < sizeof(buf) && s->heading < 360)
+        o += sniprintf(buf + o, sizeof(buf) - o, "HDG %03u", s->heading);
+    if(o > 0)
+    {
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", buf);
+    }
+
+    const char *st = ais_navStatusName(s->navStatus);
+    const char *type = ais_shipTypeName(s->shipType);
+    if(st != NULL || type != NULL)
+    {
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s%s%s",
+                  st ? st : "", (st && type) ? ", " : "", type ? type : "");
+    }
+
+    if(s->destination[0] != '\0')
+    {
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, ">%s",
+                  s->destination);
+    }
+
+    if(s->length != 0 || s->draught != 0)
+    {
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey,
+                  "%ux%um draught %u.%um", s->length, s->beam,
+                  s->draught / 10, s->draught % 10);
+    }
+
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%u reports, msg %u",
+              s->reports, s->msgType);
     return true;
 }
 #endif
@@ -2639,6 +2895,11 @@ static void _ui_drawRichMain(ui_state_t *ui_state, bool mem)
         #ifdef CONFIG_ACARS
         case OPMODE_ACARS:
             _ui_richAcars();
+            return;
+        #endif
+        #ifdef CONFIG_AIS
+        case OPMODE_AIS:
+            _ui_richAis();
             return;
         #endif
         default:

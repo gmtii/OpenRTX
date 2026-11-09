@@ -259,6 +259,11 @@ typedef struct ui_state_t
     bool acars_page;
     uint8_t acars_sel;
 #endif
+#ifdef CONFIG_AIS
+    // AIS station page on the VFO screen (*), station shown
+    bool ais_page;
+    uint8_t ais_sel;
+#endif
 #ifdef CONFIG_UI_SAVE_CHANNEL
     // Save VFO screen: # pressed once on a memory, again deletes it
     bool save_delete_armed;
