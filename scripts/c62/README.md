@@ -56,6 +56,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_DMR` | `ON` | DMR receive mode "DMR" (section 6) |
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
+| `C62_ACARS` | `ON` | ACARS receive mode "ACARS" (section 13) |
 | `C62_SPECTRUM` | `ON` | Spectrum view, MONI + 0 on the VFO screen (section 9) |
 | `C62_RICH_UI` | `ON` | Main screen with a mode badge, the receiver state (RX, TX, SYNC, LOCK), call cards and a segmented S-meter, also in the macro menu (squelch level and threshold in FM and AM); macro keys 7 and 8 set the frequency step instead of the brightness. `OFF` keeps the default OpenRTX screen and macro menu |
 | `C62_REG43_SWEEP` | `OFF` | Cycle `REG_43` through 7 test values in M17 RX |
@@ -230,7 +231,11 @@ to the main one:
 - **Groups** (3): the groups heard in clear signalling, most recent first,
   with their calls (`c`), floor grants (`t`), `enc` if the last call was
   encrypted, and their age; under the list, the picked group's last
-  talker and the radios seen in it.
+  talker and the radios seen in it. **ENTER** (green key) filters the
+  picked group: only its clear calls are played, the others count as
+  `Filtered` on the call card and in the debug page (`flt`). The filtered
+  group is drawn green and marked `F` in the top bar; ENTER on it again
+  removes the filter.
 - **Radios** (4): the radios heard (callers, talkers, SDS senders,
   registrations), most recent first, with their last group and age;
   under the list, the picked radio's last activity, its calls and SDS,
@@ -397,3 +402,28 @@ audio may stutter for a moment.
 ## 12. Flashlight
 
 **MONI + \*** turns the white flashlight LED on and off.
+
+## 13. ACARS mode
+
+**ACARS** follows **AM** under key **5**. It receives the AM detector's
+audio, flattened (no de-emphasis or voice filters), and decodes ACARS
+(ARINC 618: 2400 bit/s MSK on 1200 and 2400 Hz) in software. Main VHF
+ACARS channels in Europe: 131.525, 131.725 and 131.825 MHz. It is receive
+only, and leaving it with `C62_ACARS=OFF` removes it entirely.
+
+The main screen shows the messages received and the frames dropped on a
+bad CRC, the newest message's aircraft, flight, label and text. The green
+LED is on while a frame comes in, and the screen wakes for each message.
+**\*** opens the message list (16 kept, newest first): **UP/DOWN** pick a
+message, **\*** or **ESC** close it.
+
+The decoder looks for the SYN SYN sync word at every sampling phase and
+under six tone-to-bit mappings, the coherent MSK of real transmitters
+among them. Characters failing parity are repaired when flipping bits
+makes the CRC good (up to two per frame).
+
+The Flipper Zero test files of the
+[UV-K1/K5 custom firmware](https://github.com/armel/uv-k1-k5v3-firmware-custom/tree/main/App/apps/acarsrx/test)
+(OOK on 433.650 MHz) decode with the radio in ACARS mode on 433.650 MHz.
+Their frames use a letter block identifier with a flight number, so the
+flight shows inside the text.
