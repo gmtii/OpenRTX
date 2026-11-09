@@ -22,6 +22,10 @@
 /* A bad frame counts as an error only if no other lane decodes the burst
  * within this many samples */
 #define BAD_WAIT 400u
+/* Levels kept per frame: the bits, stuffing, end flag and a reference */
+#define MAX_LEVELS (8 * FRAME_BYTES * 6 / 5 + 16)
+/* Repair: the least sure levels tried, alone and in pairs */
+#define REPAIR_CANDIDATES 20
 
 /* Large and rarely touched: in PSRAM on the C62 (not zeroed) */
 #ifdef PLATFORM_C62
@@ -41,6 +45,12 @@ struct lane {
     unsigned ones;    /* Consecutive ones, for de-stuffing */
     unsigned nbits;   /* Bits stored in frame */
     uint8_t frame[FRAME_BYTES];
+    /* Every level decided since the last bit of the start flag: the sign
+     * the level, the magnitude how sure it is (see ais_process()) */
+    int8_t levels[MAX_LEVELS];
+    unsigned nlevels;
+    bool salvage;    /* Cut short: collecting levels up to target */
+    unsigned target; /* Levels to collect before repairing */
 };
 
 /* Level window: 64 samples, 12.8 bits. Data has a transition at least
@@ -295,25 +305,224 @@ static bool accept(const uint8_t *f, unsigned bytes)
 static void laneSearch(struct lane *l)
 {
     l->collecting = false;
+    l->salvage = false;
     l->history = 0;
 }
 
-static void laneStart(struct lane *l)
+static void laneStart(struct lane *l, int8_t reference)
 {
     l->collecting = true;
+    l->salvage = false;
     l->ones = 0;
     l->nbits = 0;
+    l->levels[0] = reference;
+    l->nlevels = 1;
     memset(l->frame, 0, sizeof(l->frame));
 }
 
 /**
- * The end flag of a frame: check its length and CRC.
+ * Length in bits of a message type, 0 if not one we read. Message 21 is
+ * 272 to 360 bits: only its own end flag gives its length.
+ */
+static unsigned typeBits(unsigned type)
+{
+    switch (type) {
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+        case 9:
+        case 11:
+        case 18:
+        case 24: /* Part A may be 160 */
+            return 168;
+        case 5:
+            return 424;
+        case 19:
+            return 312;
+        case 27:
+            return 96;
+        default:
+            return 0;
+    }
+}
+
+/**
+ * Whether a message of this type may have this many bits.
+ */
+static bool lengthFits(unsigned type, unsigned bits)
+{
+    if (type == 21)
+        return bits >= 272 && bits <= 360;
+    if (type == 24 && bits == 160)
+        return true;
+    if (type == 27 && bits == 168)
+        return true;
+    return (bits != 0) && (typeBits(type) == bits);
+}
+
+/* Message lengths tried by a repair, in bits */
+static const unsigned repairBits[] = { 96, 160, 168, 312, 424 };
+
+/**
+ * Decode a frame from its levels, NRZI and de-stuffing, without relying on
+ * an end flag: the CRC is checked at every known message length.
+ *
+ * @param lv: the levels, the first one the reference (last bit of the
+ * start flag).
+ * @return the number of bytes with the CRC of a known message of the right
+ * length, 0 if none.
+ */
+static unsigned decodeLevels(const int8_t *lv, unsigned n, uint8_t *out)
+{
+    const unsigned maxBits = 424 + 16;
+    unsigned nbits = 0, ones = 0;
+    uint16_t crc = 0xffff;
+    memset(out, 0, FRAME_BYTES);
+    for (unsigned i = 1; i < n && nbits < maxBits; i++) {
+        bool bit = ((lv[i] > 0) == (lv[i - 1] > 0));
+        if (ones == 5) {
+            if (bit)
+                return 0; /* Six ones: not data */
+            ones = 0;
+            continue;     /* Stuffed zero */
+        }
+        if (bit)
+            out[nbits >> 3] |= (uint8_t)(1u << (nbits & 7));
+        nbits++;
+        ones = bit ? ones + 1 : 0;
+        if ((nbits & 7) != 0)
+            continue;
+
+        crc = crcAdd(crc, out[(nbits >> 3) - 1]);
+        if (crc != CRC_GOOD)
+            continue;
+        for (unsigned k = 0; k < sizeof(repairBits) / sizeof(repairBits[0]);
+             k++) {
+            if (nbits == repairBits[k] + 16
+                && lengthFits((unsigned)(out[0] >> 2), repairBits[k]))
+                return nbits / 8;
+        }
+    }
+    return 0;
+}
+
+/**
+ * A frame failing its CRC or cut short by a false flag: flip its least
+ * sure levels, alone and then in pairs, until it decodes as a known
+ * message of the right length. One level wrong is two bits wrong after
+ * NRZI, and may move the stuffing or fake a flag: repairing levels and
+ * reading a known length cover all of these.
+ *
+ * @return the number of bytes with the CRC, 0 if not repaired.
+ */
+static unsigned repairLevels(struct lane *l, uint8_t *out)
+{
+    const unsigned n = l->nlevels;
+    int8_t *lv = l->levels;
+    if (n < 8 * MIN_BYTES)
+        return 0;
+
+    /* As received first */
+    unsigned bytes = decodeLevels(lv, n, out);
+    if (bytes != 0)
+        return bytes;
+
+    /* The least sure levels, the reference excluded */
+    unsigned cand[REPAIR_CANDIDATES];
+    unsigned nc = 0;
+    for (unsigned i = 1; i < n; i++) {
+        unsigned m = (unsigned)abs(lv[i]);
+        unsigned k;
+        if (nc < REPAIR_CANDIDATES)
+            k = nc++;
+        else if (m >= (unsigned)abs(lv[cand[nc - 1]]))
+            continue;
+        else
+            k = nc - 1;
+        while (k > 0 && (unsigned)abs(lv[cand[k - 1]]) > m) {
+            cand[k] = cand[k - 1];
+            k--;
+        }
+        cand[k] = i;
+    }
+
+    for (unsigned a = 0; a < nc; a++) {
+        for (unsigned b = a; b < nc; b++) {
+            lv[cand[a]] = (int8_t)-lv[cand[a]];
+            if (b != a)
+                lv[cand[b]] = (int8_t)-lv[cand[b]];
+            bytes = decodeLevels(lv, n, out);
+            lv[cand[a]] = (int8_t)-lv[cand[a]];
+            if (b != a)
+                lv[cand[b]] = (int8_t)-lv[cand[b]];
+            if (bytes != 0)
+                return bytes;
+        }
+    }
+    return 0;
+}
+
+static void stopLanes(void)
+{
+    rx.badDeadline = 0;
+    for (int i = 0; i < LANES; i++)
+        laneSearch(&rx.lane[i]);
+}
+
+/**
+ * A frame that failed: repair it, else count it bad unless another lane
+ * decodes the burst. Leaves the lane searching either way.
+ */
+static void laneRepair(struct lane *l)
+{
+    static uint8_t fixed[FRAME_BYTES];
+    unsigned bytes = repairLevels(l, fixed);
+    if (bytes != 0) {
+        accept(fixed, bytes - 2);
+        pthread_mutex_lock(&aisMutex);
+        stats.repaired++;
+        pthread_mutex_unlock(&aisMutex);
+        stopLanes();
+        return;
+    }
+    if (rx.badDeadline == 0)
+        rx.badDeadline = rx.samples + BAD_WAIT;
+    laneSearch(l);
+}
+
+/**
+ * A frame cut short (seven ones, or a flag where no message ends): keep
+ * the levels coming until the length its type announces, then repair.
+ */
+static void laneSalvage(struct lane *l)
+{
+    unsigned bits = (l->nbits >= 6) ? typeBits(l->frame[0] >> 2) : 0;
+    if (bits == 0)
+        bits = 168; /* The most common */
+    unsigned target = 1 + (bits + 16) * 6 / 5 + 4;
+    if (target > MAX_LEVELS)
+        target = MAX_LEVELS;
+    l->salvage = true;
+    l->target = target;
+    if (l->nlevels >= target)
+        laneRepair(l);
+}
+
+/**
+ * The end flag of a frame: check its length and CRC, repair it if needed.
  */
 static void laneFinish(struct lane *l)
 {
     unsigned bytes = l->nbits / 8;
-    if ((l->nbits % 8) != 0 || bytes < MIN_BYTES)
-        return; /* Noise after a false start, or between two flags */
+    if ((l->nbits % 8) != 0 || bytes < MIN_BYTES) {
+        /* Between two flags, or a level wrong that faked the flag */
+        if (l->nbits >= 40)
+            laneSalvage(l);
+        else
+            laneStart(l, l->levels[l->nlevels - 1]);
+        return;
+    }
 
     /* Bytes were assembled least significant bit first, as sent: the CRC
      * runs on them so, the fields are read from their most significant bit
@@ -322,23 +531,19 @@ static void laneFinish(struct lane *l)
     for (unsigned i = 0; i < bytes; i++)
         crc = crcAdd(crc, l->frame[i]);
     if (crc != CRC_GOOD) {
-        if (rx.badDeadline == 0)
-            rx.badDeadline = rx.samples + BAD_WAIT;
+        laneRepair(l);
         return;
     }
 
     accept(l->frame, bytes - 2);
-
     /* The other lanes heard the same burst */
-    rx.badDeadline = 0;
-    for (int i = 0; i < LANES; i++)
-        laneSearch(&rx.lane[i]);
+    stopLanes();
 }
 
 /**
- * One NRZI-decoded bit of a lane.
+ * One NRZI-decoded bit of a lane, and the level it came from.
  */
-static void laneBit(struct lane *l, bool bit)
+static void laneBit(struct lane *l, bool bit, int8_t soft)
 {
     l->history = (l->history << 1) | bit;
 
@@ -354,8 +559,17 @@ static void laneBit(struct lane *l, bool bit)
                 stats.syncs++;
                 pthread_mutex_unlock(&aisMutex);
             }
-            laneStart(l);
+            laneStart(l, soft);
         }
+        return;
+    }
+
+    if (l->nlevels < MAX_LEVELS)
+        l->levels[l->nlevels++] = soft;
+
+    if (l->salvage) {
+        if (l->nlevels >= l->target)
+            laneRepair(l);
         return;
     }
 
@@ -368,22 +582,18 @@ static void laneBit(struct lane *l, bool bit)
         return;
     }
     if (l->ones == 6) {
-        if (bit) { /* Seven ones: abort */
-            laneSearch(l);
+        if (bit) { /* Seven ones: a level wrong, or the end of the burst */
+            laneSalvage(l);
             return;
         }
         /* Flag: the zero and five ones before it were stored */
         l->nbits = (l->nbits >= 6) ? l->nbits - 6 : 0;
         laneFinish(l);
-        /* Not a valid frame (a valid one stops every lane): the flag may
-         * open the next one */
-        if (l->collecting)
-            laneStart(l);
         return;
     }
 
     if (l->nbits >= 8 * FRAME_BYTES) {
-        laneSearch(l);
+        laneRepair(l);
         return;
     }
     if (bit)
@@ -420,14 +630,22 @@ void ais_process(const int16_t *samples, size_t n)
             bool level = (v > th) ? true : (v < -th) ? false : l->level;
 
             /* Bit clock: a transition belongs half way between two
-             * decisions */
+             * decisions. Fast while searching; slow in a frame, where the
+             * training bits set the phase and noise would make it slip */
             l->phase += 1.0f / SPB;
             if (level != l->level)
-                l->phase += 0.25f * (0.5f - l->phase);
+                l->phase += (l->collecting ? 0.1f : 0.25f) * (0.5f - l->phase);
             l->level = level;
             if (l->phase >= 1.0f) {
                 l->phase -= 1.0f;
-                laneBit(l, level == l->sampled); /* NRZI: 1 no change */
+                /* How sure the level is, 1 to 127: 64 at the centre,
+                 * more the further past it the sample was, less if the
+                 * hysteresis held the level against the sample */
+                float c = (amp > 0) ? (level ? v : -v) * 63.0f / amp : 0;
+                int conf = 64 + (int)c;
+                conf = (conf < 1) ? 1 : (conf > 127) ? 127 : conf;
+                int8_t soft = (int8_t)(level ? conf : -conf);
+                laneBit(l, level == l->sampled, soft); /* NRZI */
                 l->sampled = level;
             }
         }

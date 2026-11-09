@@ -22,8 +22,13 @@ extern "C" {
  *   discriminator, 48 kHz -> low-pass -> centre and amplitude from the
  *   highest and lowest level over the last 13 bits (any carrier offset)
  *   -> three slicers (hysteresis 0, 1/8 and 3/8 of the amplitude), each
- *   with its own bit clock pulled by the transitions -> NRZI -> HDLC:
- *   training bits and flag, bit de-stuffing, CRC-16 (X.25).
+ *   with its own bit clock pulled by the transitions (slowly once in a
+ *   frame) -> NRZI -> HDLC: training bits and flag, bit de-stuffing,
+ *   CRC-16 (X.25).
+ *
+ * A frame failing its CRC, or cut short by a false flag, is repaired:
+ * its least sure levels are flipped, alone and in pairs, and the bits
+ * read up to each known message length until the CRC is good.
  *
  * Bytes come least significant bit first, fields are numbered from the
  * most significant bit of the first byte. Valid reports update a table of
@@ -67,6 +72,7 @@ struct aisShip {
 
 struct aisStats {
     uint32_t frames;    /**< Valid reports */
+    uint32_t repaired;  /**< Of which repaired */
     uint32_t crcErrors; /**< Frames dropped on a bad CRC */
     uint32_t syncs;     /**< Training bits and flag found */
     uint32_t ships;     /**< Stations in the table */
