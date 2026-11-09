@@ -71,6 +71,12 @@ extern const struct BK4819 c62_bk4819;
 extern const struct gpioDev c62_bk4819_gpio;
 extern const struct BK1080 c62_bk1080;
 
+/**
+ * Keep the speaker amplifier on whatever the audio routes, for the BK1080
+ * broadcast receiver whose audio goes to it directly (audio_c62.c).
+ */
+void audio_c62_holdSpeaker(bool hold);
+
 extern const struct gpio_dt_spec speaker_enable;
 extern const struct gpio_dt_spec dtmf_enable;
 extern const struct gpio_dt_spec button_ptt;

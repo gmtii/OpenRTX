@@ -25,6 +25,7 @@
 static K_MUTEX_DEFINE(board_mutex);
 static bool initialized;
 static bool paths[3][3]; /* Active routes, by source and sink */
+static bool speakerHold; /* The BK1080 plays: speaker always on */
 /* Both device tables use one driver; the config selects capture or playback */
 static const bool input_config = true;
 static const bool output_config = false;
@@ -75,7 +76,7 @@ static void restore_console(void)
 static void update_mux(enum AudioSource source)
 {
     bool radio = false;
-    bool speaker = false;
+    bool speaker = speakerHold;
     for (unsigned int i = 0; i < 3; i++) {
         radio |= paths[SOURCE_RTX][i];
         speaker |= paths[i][SINK_SPK];
@@ -87,6 +88,17 @@ static void update_mux(enum AudioSource source)
             radio_disableAfOutput();
     }
     gpio_pin_set_dt(&speaker_enable, speaker);
+}
+
+void audio_c62_holdSpeaker(bool hold)
+{
+    k_mutex_lock(&board_mutex, K_FOREVER);
+    speakerHold = hold;
+    bool speaker = hold;
+    for (unsigned int i = 0; i < 3; i++)
+        speaker |= paths[i][SINK_SPK];
+    gpio_pin_set_dt(&speaker_enable, speaker);
+    k_mutex_unlock(&board_mutex);
 }
 
 void audio_init(void)
