@@ -70,6 +70,7 @@
 #endif
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraHeard.h"
+#include "protocols/TETRA/TetraStatus.h"
 #include "protocols/TETRA/TetraSds.h"
 #endif
 
@@ -1226,6 +1227,8 @@ static bool _ui_fsm_acarsPage(kbd_msg_t msg)
 #endif
 
 #ifdef CONFIG_TETRA
+extern uint32_t _ui_tetraGroupAt(int i);
+
 /**
  * TETRA pages of the VFO and memory screens: * cycles them, UP/DOWN browse
  * the SDS page and ESC leaves it.
@@ -1256,6 +1259,15 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg)
             ui_state.tetra_page = page;
             ui_state.tetra_sds_sel = 0;
         }
+        return true;
+    }
+
+    // Groups page: ENTER filters the group picked, or clears its filter
+    if((ui_state.tetra_page == TETRA_PAGE_GROUPS) && (msg.keys & KEY_ENTER))
+    {
+        uint32_t gssi = _ui_tetraGroupAt(ui_state.tetra_sds_sel);
+        if(gssi != 0)
+            tetraStatus_setFilter((gssi == tetraStatus_filter()) ? 0 : gssi);
         return true;
     }
 

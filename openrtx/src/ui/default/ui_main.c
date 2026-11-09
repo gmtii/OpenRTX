@@ -767,8 +767,9 @@ static void _ui_drawTetraDebug(void)
               ts.lastTrafficTn, (unsigned long)ss.slots);
     pos.y += step;
     gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
-              "Skip unk %lu enc %lu dat %lu", (unsigned long)ss.unknown,
-              (unsigned long)ss.encrypted, (unsigned long)ss.data);
+              "Skip unk %lu enc %lu dat %lu flt %lu",
+              (unsigned long)ss.unknown, (unsigned long)ss.encrypted,
+              (unsigned long)ss.data, (unsigned long)ss.filtered);
     pos.y += step;
     gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
               "Frames %lu bad %lu", (unsigned long)ss.queued,
@@ -868,7 +869,7 @@ static void _ui_ago(char *buf, size_t len, long long tick)
  * @return the y of the detail lines under the list.
  */
 static int16_t _ui_heardList(ui_state_t *ui_state, const char *title, int n,
-                             void (*row)(int i, char *l, char *m, char *r,
+                             bool (*row)(int i, char *l, char *m, char *r,
                                          size_t len))
 {
     const fontSize_t font = FONT_SIZE_6PT;
@@ -891,14 +892,16 @@ static int16_t _ui_heardList(ui_state_t *ui_state, const char *title, int n,
         first = ui_state->tetra_sds_sel - HEARD_ROWS + 1;
     for(int i = first; i < n && i < first + HEARD_ROWS; i++)
     {
+        // A marked row (the filtered group) in green
+        static const color_t marked = { 63, 191, 95, 255 };
         char l[16], m[16], r[8];
-        row(i, l, m, r, sizeof(l));
+        bool mark = row(i, l, m, r, sizeof(l));
         int16_t ry = y + 3 + step * (i - first + 1);
-        color_t c = color_white;
+        color_t c = mark ? marked : color_white;
         if(i == ui_state->tetra_sds_sel)
         {
             gfx_drawRect((point_t){ 0, (int16_t)(ry - 1) },
-                         CONFIG_SCREEN_WIDTH, step, color_white, true);
+                         CONFIG_SCREEN_WIDTH, step, c, true);
             c = color_black;
         }
         point_t p = { layout.horizontal_pad, (int16_t)(ry + 8) };
@@ -920,15 +923,28 @@ static UI_BSS struct tetraRadio heardRadios[TETRA_HEARD_RADIOS];
 
 static const char *const radioActivity[] = { "call", "talk", "SDS", "reg" };
 
-static void _ui_groupRow(int i, char *l, char *m, char *r, size_t len)
+static bool _ui_groupRow(int i, char *l, char *m, char *r, size_t len)
 {
     const struct tetraGroup *g = &heardGroups[i];
     sniprintf(l, len, "G %lu", (unsigned long)g->gssi);
     sniprintf(m, len, "%uc %ut%s", g->calls, g->tx, g->encrypted ? " enc" : "");
     _ui_ago(r, 8, g->last);
+    return g->gssi == tetraStatus_filter();
 }
 
-static void _ui_radioRow(int i, char *l, char *m, char *r, size_t len)
+/**
+ * The group of a row of the groups page, as last drawn.
+ *
+ * @return its GSSI, 0 if there is no such row.
+ */
+uint32_t _ui_tetraGroupAt(int i)
+{
+    if(i < 0 || i >= TETRA_HEARD_GROUPS)
+        return 0;
+    return heardGroups[i].gssi;
+}
+
+static bool _ui_radioRow(int i, char *l, char *m, char *r, size_t len)
 {
     const struct tetraRadio *rd = &heardRadios[i];
     sniprintf(l, len, "%lu", (unsigned long)rd->issi);
@@ -937,9 +953,10 @@ static void _ui_radioRow(int i, char *l, char *m, char *r, size_t len)
     else
         sniprintf(m, len, "%s", radioActivity[rd->activity & 3]);
     _ui_ago(r, 8, rd->last);
+    return false;
 }
 
-static void _ui_callRow(int i, char *l, char *m, char *r, size_t len)
+static bool _ui_callRow(int i, char *l, char *m, char *r, size_t len)
 {
     const struct tetraCallInfo *c = &heardCalls[i];
     if(c->dst != 0)
@@ -955,6 +972,7 @@ static void _ui_callRow(int i, char *l, char *m, char *r, size_t len)
         sniprintf(r, 8, "now");
     else
         _ui_ago(r, 8, c->last);
+    return (c->dst != 0) && (c->dst == tetraStatus_filter());
 }
 
 /**
@@ -1010,6 +1028,17 @@ static void _ui_drawTetraGroups(ui_state_t *ui_state)
 {
     int n = tetraHeard_groups(heardGroups, TETRA_HEARD_GROUPS);
     int16_t y = _ui_heardList(ui_state, "Groups", n, _ui_groupRow);
+
+    // The group filter, ENTER sets or clears it
+    uint32_t filter = tetraStatus_filter();
+    point_t hp = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
+    if(filter != 0)
+        gfx_print(hp, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
+                  (color_t){ 63, 191, 95, 255 }, "F %lu",
+                  (unsigned long)filter);
+    else
+        gfx_print(hp, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, info_grey,
+                  "ENT: filter");
     if(n == 0)
         return;
 
@@ -1944,6 +1973,10 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
                                     rich_green, true)
                     : _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "NO SYNC",
                                     rich_red, false);
+        // A group filter set
+        if(tetraStatus_filter() != 0)
+            x = _ui_richBadge(x + 2, 2, 12, FONT_SIZE_6PT, "F", rich_green,
+                              false);
     }
     #endif
     #ifdef CONFIG_DMR_RX
@@ -2348,6 +2381,11 @@ static void _ui_richTetra(void)
         {
             state = "Encrypted?";
             sc = rich_orange;
+        }
+        else if(ts.callFiltered)
+        {
+            state = "Filtered";
+            sc = rich_grey;
         }
         else if(ts.voice)
         {
