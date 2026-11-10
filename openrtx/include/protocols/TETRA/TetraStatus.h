@@ -34,6 +34,7 @@ struct tetraStatus {
     bool callEncrypted;  /**< Call or its traffic is encrypted */
     bool callUnknown;    /**< Traffic of no call set up in clear: not played */
     bool callFiltered;   /**< Traffic of a call outside the group filter */
+    bool callOther;      /**< A second clear call, not played, meanwhile */
     bool voice;          /**< Traffic seen in the last second */
     uint16_t callId;     /**< Call identifier */
     uint32_t callDst;    /**< Called (group) SSI, 0 if unknown */

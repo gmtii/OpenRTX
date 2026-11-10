@@ -31,6 +31,25 @@ static long long lastCall;        /* Tick of the last call activity */
 static long long lastVoice;       /* Tick of the last traffic slot */
 
 /*
+ * Two clear calls at once, on two timeslots: only one is played, else
+ * their speech frames interleave in the one decoder and the audio jumps
+ * between them. The first one heard holds its timeslot until it is
+ * released, or has been silent for LOCK_RELEASE_MS (longer than the pause
+ * between two overs); the other one's slots are skipped and its
+ * signalling leaves the call card alone.
+ */
+#define LOCK_RELEASE_MS 4000
+#define OTHER_SHOWN_MS 2000
+static uint8_t lockTn;      /* Timeslot played, 0 none */
+static long long lockLast;  /* Tick of its last speech slot */
+static long long lastOther; /* Tick of the last slot of a second call */
+
+static bool lockHeld(long long now)
+{
+    return (lockTn != 0) && (now - lockLast <= LOCK_RELEASE_MS);
+}
+
+/*
  * Calls whose signalling was received, to tell which call a traffic slot
  * belongs to. libtetra matches traffic to its calls by usage marker only,
  * and in promiscuous mode passes on unmatched traffic flagged clear: it
@@ -177,6 +196,7 @@ void tetra_getStatus(struct tetraStatus *out)
     long long now = getTick();
     status.call = status.call && (now - lastCall < CALL_TIMEOUT_MS);
     status.voice = status.call && (now - lastVoice < VOICE_TIMEOUT_MS);
+    status.callOther = (lastOther != 0) && (now - lastOther < OTHER_SHOWN_MS);
     *out = status;
     pthread_mutex_unlock(&statusMutex);
 }
@@ -200,8 +220,23 @@ static void onSds(const struct tetra_sds *s)
 
 static void onCall(const struct tetra_call *c)
 {
+    /* The release of the call played frees its timeslot */
+    if (c->what == TETRA_CALL_RELEASE && lockTn != 0) {
+        for (int i = 0; i < MAX_CALLS; i++) {
+            if (calls[i].used && calls[i].id == c->call_id
+                && (calls[i].timeslots & (1u << (lockTn - 1))))
+                lockTn = 0;
+        }
+    }
+
     trackCall(c);
     tetraHeard_call(c);
+
+    /* Signalling of a second call, on other timeslots than the call being
+     * played: listed, but the call card stays on the played one */
+    if (lockHeld(getTick()) && (c->timeslots != 0)
+        && !(c->timeslots & (1u << (lockTn - 1))))
+        return;
 
     switch (c->what) {
         case TETRA_CALL_RELEASE:
@@ -249,6 +284,19 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
         /* A group filter set: only that group's calls are played */
         if (call == TETRA_TRAFFIC_CLEAR && filterGssi != 0 && dst != filterGssi)
             call = TETRA_TRAFFIC_FILTERED;
+        /* One clear call at a time, see lockTn */
+        if (call == TETRA_TRAFFIC_CLEAR) {
+            long long now = getTick();
+            uint8_t tn = ev->u.traffic.time.tn;
+            if (!lockHeld(now) || tn == lockTn) {
+                if (lockTn != tn)
+                    CALL_PRINT("TETRA: playing timeslot %u\n", tn);
+                lockTn = tn;
+                lockLast = now;
+            } else {
+                call = TETRA_TRAFFIC_OTHER;
+            }
+        }
         pthread_mutex_unlock(&statusMutex);
         tetraSpeech_traffic(&ev->u.traffic, call);
     }
@@ -283,6 +331,11 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
 
         case TETRA_EV_TRAFFIC: {
             const struct tetra_traffic *t = &ev->u.traffic;
+            if (call == TETRA_TRAFFIC_OTHER) {
+                /* The second call: noted, the card stays on the first */
+                lastOther = getTick();
+                break;
+            }
             if (t->talker_ssi != 0)
                 status.talker = t->talker_ssi;
             status.callEncrypted |= (call == TETRA_TRAFFIC_ENCRYPTED);
