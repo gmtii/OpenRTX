@@ -781,9 +781,10 @@ static void _ui_drawTetraDebug(void)
               ts.lastTrafficTn, (unsigned long)ss.slots);
     pos.y += step;
     gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
-              "Skip unk %lu enc %lu dat %lu flt %lu",
+              "Skip u%lu e%lu d%lu f%lu 2nd %lu",
               (unsigned long)ss.unknown, (unsigned long)ss.encrypted,
-              (unsigned long)ss.data, (unsigned long)ss.filtered);
+              (unsigned long)ss.data, (unsigned long)ss.filtered,
+              (unsigned long)ss.other);
     pos.y += step;
     gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
               "Frames %lu bad %lu", (unsigned long)ss.queued,
@@ -2803,7 +2804,8 @@ static void _ui_richTetra(void)
         }
         else if(ts.voice)
         {
-            state = "Voice";
+            // "+1": a second clear call meanwhile, not played
+            state = ts.callOther ? "Voice +1" : "Voice";
             sc = rich_green;
         }
         else
