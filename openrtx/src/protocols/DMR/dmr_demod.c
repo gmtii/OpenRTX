@@ -400,19 +400,24 @@ static void framer_step(void)
         }
 
         grade = emit_frame(tsync, sync);
-        if (grade == DMR_FRAME_OK) {
+        if (grade == DMR_FRAME_STRONG) {
             s_bad = 0;
             s_pol_bad = 0;
         } else if (sync != DMR_SYNC_NONE && ++s_pol_bad >= POL_FLIP_NO_OK) {
-            /* Syncs keep matching but nothing ever validates. With inverted
-             * polarity an idle repeater's data bursts all read as voice
-             * syncs (NEUTRAL), which a correct stream never produces back to
-             * back - so NEUTRAL counts here too. Flip and re-acquire. */
+            /* Syncs keep matching but nothing validates with a margin. With
+             * inverted polarity an idle repeater's data bursts all read as
+             * voice syncs (NEUTRAL), which a correct stream never produces
+             * back to back - so NEUTRAL counts here too; and the loose FEC
+             * checks (OK) pass a quarter to a third of random words, so
+             * they do not count as proof either (in simplex they kept the
+             * wrong polarity forever). Flip and re-acquire. */
             s_pol = -s_pol;
             s_pol_bad = 0;
             s_locked = false;
             s_cand = false;
             dmr_proto_unprove();
+        } else if (grade == DMR_FRAME_OK) {
+            s_bad = 0; /* Still a stream: keep the lock */
         } else if (grade == DMR_FRAME_BAD) {
             if (s_first_frame
                 || ++s_bad >= (s_fam == FAM_MS ? BAD_MAX_MS : BAD_MAX_BS)) {

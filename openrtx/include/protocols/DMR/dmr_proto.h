@@ -118,8 +118,16 @@ typedef struct {
 void dmr_proto_reset(void);
 
 /* Processes one burst and grades it for the demodulator's lock logic:
+ *   DMR_FRAME_STRONG   a polarity-sensitive field decoded with a margin
+ *                      random bits almost never reach: slot type Golay with
+ *                      at most 1 error and a defined data type, EMB QR with
+ *                      no error (1 if the colour code agrees), or an LC
+ *                      header / terminator passing its RS check - proof of a
+ *                      real, correctly sliced stream and of the polarity
  *   DMR_FRAME_OK       a polarity-sensitive FEC field decoded (slot type
- *                      Golay, EMB QR) - proof of a real, correctly sliced stream
+ *                      Golay, EMB QR): keeps the lock, but noise passes it
+ *                      a quarter to a third of the time, so it proves
+ *                      nothing about the polarity
  *   DMR_FRAME_NEUTRAL  proves nothing either way (voice sync burst A: the
  *                      voice sync is the exact complement of the data sync,
  *                      so on its own it cannot tell voice from inverted data)
@@ -127,6 +135,7 @@ void dmr_proto_reset(void);
  * The CACH TACT is deliberately NOT used as proof: its Hamming(7,4) code
  * contains the all-ones word, so a complemented (inverted) TACT still
  * decodes - exactly the failure it would have to catch. */
+#define DMR_FRAME_STRONG 2
 #define DMR_FRAME_OK 1
 #define DMR_FRAME_NEUTRAL 0
 #define DMR_FRAME_BAD (-1)

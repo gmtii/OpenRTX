@@ -51,6 +51,11 @@ bool dmr_hamming_13_9_decode(uint32_t *cw);
 bool dmr_hamming_16_11_decode(uint32_t *cw);
 bool dmr_golay_20_8_decode(uint32_t *cw);
 bool dmr_qr_16_7_decode(uint32_t *cw);
+/* The same, also giving the number of bits corrected: a word corrected to
+ * the code's full capacity is often noise (Golay(20,8) to 3 errors takes a
+ * third of random words, QR(16,7) to 2 errors over a quarter) */
+bool dmr_golay_20_8_decode_errors(uint32_t *cw, int *errors);
+bool dmr_qr_16_7_decode_errors(uint32_t *cw, int *errors);
 
 /* ---- BPTC(196,96): data bursts (headers, terminators, CSBK...) -------------
  * in: 196 info bits in transmitted order (burst bits 0..97 then 166..263).

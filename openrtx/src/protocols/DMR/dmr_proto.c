@@ -621,22 +621,26 @@ static void apply_packet(int slot_idx, const dmr_packet_t *pk, uint32_t t_ms)
 
 /* ---- Burst handlers ------------------------------------------------------------ */
 
-static bool handle_data_burst(int slot_idx, const uint8_t bits[264],
-                              uint32_t t_ms)
+static int handle_data_burst(int slot_idx, const uint8_t bits[264],
+                             uint32_t t_ms)
 {
     slot_state_t *st = &s_slot[slot_idx];
     uint8_t stbits[20], info[196], data[96], bytes[12];
     uint32_t cw;
-    int cc, dt;
+    int cc, dt, errors;
+    int grade;
 
     memcpy(stbits, &bits[98], 10);
     memcpy(&stbits[10], &bits[156], 10);
     cw = dmr_bits_to_u32(stbits, 20);
-    if (!dmr_golay_20_8_decode(&cw)) {
-        return false;
+    if (!dmr_golay_20_8_decode_errors(&cw, &errors)) {
+        return DMR_FRAME_BAD;
     }
     cc = (int)((cw >> 16) & 0xFu);
     dt = (int)((cw >> 12) & 0xFu);
+    /* Proof of the stream and its polarity only with a margin: 1 error at
+     * most and a defined data type (12..15 are reserved) */
+    grade = (errors <= 1 && dt <= 11) ? DMR_FRAME_STRONG : DMR_FRAME_OK;
     st->info.cc = cc;
     st->voice_idx = -1;
 
@@ -663,6 +667,7 @@ static bool handle_data_burst(int slot_idx, const uint8_t bits[264],
                                                   DMR_RS_MASK_VOICE_HEADER :
                                                   DMR_RS_MASK_TERMINATOR)) {
                     uint8_t flco = bytes[0] & 0x3Fu;
+                    grade = DMR_FRAME_STRONG; /* Checked by its RS code */
                     if (dt == DT_VOICE_LC_HEADER) {
                         s_stats
                             .lc_headers++; /* repeated headers of one call log it once */
@@ -743,16 +748,17 @@ static bool handle_data_burst(int slot_idx, const uint8_t bits[264],
             st->info.activity = DMR_ACT_DATA;
             break;
     }
-    return true;
+    return grade;
 }
 
-static bool handle_voice_nosync(int slot_idx, const uint8_t burst[132],
-                                const uint8_t bits[264], uint32_t t_ms)
+static int handle_voice_nosync(int slot_idx, const uint8_t burst[132],
+                               const uint8_t bits[264], uint32_t t_ms)
 {
     slot_state_t *st = &s_slot[slot_idx];
     uint8_t emb[16];
     uint32_t cw;
-    int lcss;
+    int lcss, errors, cc;
+    int grade;
 
     /* B..F follow a detected burst A. (Tried: treating a sync-less burst
      * after F as the next A. It only helped at ~5 dB SNR and made the decoder
@@ -761,7 +767,7 @@ static bool handle_voice_nosync(int slot_idx, const uint8_t burst[132],
     st->voice_idx++;
     if (st->voice_idx > 5) {
         st->voice_idx = -1; /* no new burst A: the call paused or ended */
-        return false;
+        return DMR_FRAME_BAD;
     }
     /* the AMBE frames carry their own FEC: decode them even if the EMB fails */
     if (s_proven) {
@@ -771,16 +777,22 @@ static bool handle_voice_nosync(int slot_idx, const uint8_t burst[132],
     memcpy(emb, &bits[108], 8);
     memcpy(&emb[8], &bits[148], 8);
     cw = dmr_bits_to_u32(emb, 16);
-    if (!dmr_qr_16_7_decode(&cw)) {
+    if (!dmr_qr_16_7_decode_errors(&cw, &errors)) {
         st->emb_nfrag = 0;
         if (++st->emb_bad_run >= 3) {
             st->voice_idx =
                 -1; /* three undecodable EMBs in a row: the call has gone */
         }
-        return false;
+        return DMR_FRAME_BAD;
     }
     st->emb_bad_run = 0;
-    st->info.cc = (int)((cw >> 12) & 0xFu);
+    cc = (int)((cw >> 12) & 0xFu);
+    /* Proof only with a margin: no error, or one and the colour code seen
+     * before on this slot */
+    grade = (errors == 0 || (errors == 1 && cc == st->info.cc)) ?
+                DMR_FRAME_STRONG :
+                DMR_FRAME_OK;
+    st->info.cc = cc;
     lcss = (int)((cw >> 9) & 0x3u);
     st->info.activity = DMR_ACT_VOICE;
 
@@ -804,7 +816,7 @@ static bool handle_voice_nosync(int slot_idx, const uint8_t burst[132],
     } else if (lcss != 0) {
         st->emb_nfrag = 0; /* out of sequence */
     }
-    return true;
+    return grade;
 }
 
 /* ---- Entry point ---------------------------------------------------------------- */
@@ -877,8 +889,7 @@ int dmr_proto_frame(const dmr_frame_t *f)
     st = &s_slot[slot_idx];
 
     if (is_data_sync(f->sync)) {
-        grade = handle_data_burst(slot_idx, bits, f->t_ms) ? DMR_FRAME_OK :
-                                                             DMR_FRAME_BAD;
+        grade = handle_data_burst(slot_idx, bits, f->t_ms);
     } else if (is_voice_sync(f->sync)) {
         dmr_data_interrupt(slot_idx);
         st->voice_idx = 0;
@@ -889,13 +900,14 @@ int dmr_proto_frame(const dmr_frame_t *f)
             dmr_voice_burst(slot_idx, f->burst, 0, f->t_ms);
         }
     } else if (st->voice_idx >= 0) {
-        grade = handle_voice_nosync(slot_idx, f->burst, bits, f->t_ms) ?
-                    DMR_FRAME_OK :
-                    DMR_FRAME_BAD;
+        grade = handle_voice_nosync(slot_idx, f->burst, bits, f->t_ms);
     }
 
-    if (grade == DMR_FRAME_OK) {
+    /* Voice reaches the vocoder only once a burst has proven the stream */
+    if (grade == DMR_FRAME_STRONG) {
         s_proven = true;
+    }
+    if (grade >= DMR_FRAME_OK) {
         st->info.last_ms = f->t_ms;
         s_stats.frames_valid++;
     }

@@ -146,7 +146,7 @@ bool dmr_hamming_16_11_decode(uint32_t *cw)
  * ~33 bursts/s. Correction limits follow the minimum distances measured in
  * the host test: d=8 -> 3 errors for Golay(20,8), d=6 -> 2 for QR(16,7). */
 static bool nearest_decode(uint32_t *cw, int k, uint32_t (*enc)(uint32_t),
-                           int t)
+                           int t, int *errors)
 {
     int best = 99;
     uint32_t best_cw = 0;
@@ -161,6 +161,9 @@ static bool nearest_decode(uint32_t *cw, int k, uint32_t (*enc)(uint32_t),
             }
         }
     }
+    if (errors != NULL) {
+        *errors = best;
+    }
     if (best > t) {
         return false;
     }
@@ -170,11 +173,19 @@ static bool nearest_decode(uint32_t *cw, int k, uint32_t (*enc)(uint32_t),
 
 bool dmr_golay_20_8_decode(uint32_t *cw)
 {
-    return nearest_decode(cw, 8, dmr_golay_20_8_encode, 3);
+    return nearest_decode(cw, 8, dmr_golay_20_8_encode, 3, NULL);
 }
 bool dmr_qr_16_7_decode(uint32_t *cw)
 {
-    return nearest_decode(cw, 7, dmr_qr_16_7_encode, 2);
+    return nearest_decode(cw, 7, dmr_qr_16_7_encode, 2, NULL);
+}
+bool dmr_golay_20_8_decode_errors(uint32_t *cw, int *errors)
+{
+    return nearest_decode(cw, 8, dmr_golay_20_8_encode, 3, errors);
+}
+bool dmr_qr_16_7_decode_errors(uint32_t *cw, int *errors)
+{
+    return nearest_decode(cw, 7, dmr_qr_16_7_encode, 2, errors);
 }
 
 /* ------------------------------------------------------------------------- */
