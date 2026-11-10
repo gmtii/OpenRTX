@@ -17,9 +17,11 @@
 /*
  * The TETRA and DMR receive modes decode in the rtx thread: libtetra needs
  * up to about 1.5 KB (Viterbi, MAC, SDS), the DMR decoder about 1 KB of
- * burst buffers, plus the event callbacks and newlib's snprintf.
+ * burst buffers on top of its call chain (frame, burst handlers, BPTC, RS,
+ * LC), plus the event callbacks and newlib's snprintf: 4 KB left little
+ * margin, the heap has plenty.
  */
-#define RTX_THREAD_STKSIZE    4096
+#define RTX_THREAD_STKSIZE    6144
 #elif defined(PLATFORM_C62)
 #define RTX_THREAD_STKSIZE    1024
 #else
