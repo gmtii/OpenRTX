@@ -47,7 +47,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | Option | Default | Effect |
 |---|---|---|
 | `C62_WIDE_RX` | `ON` | M17-mode RX uses BK4819 `REG_43 = 0x7e28`, the widest documented filter (see section 4) |
-| `C62_BASEBAND_DUMP` | `ON` | Send raw 48 kHz RX audio over the UART. The console log is muted after audio starts |
+| `C62_BASEBAND_DUMP` | `OFF` | Send raw 48 kHz RX audio over the UART. The console log is muted after audio starts |
 | `C62_BASEBAND_DUMP_BAUD` | `115200` | UART baud rate during the dump |
 | `C62_BASEBAND_DUMP_BURST` | `ON` | Record 1 MiB (10.4 s) to PSRAM, send it, repeat |
 | `C62_BASEBAND_DUMP_FORMAT` | `1` | `1` = 16-bit samples, `2` = 12-bit packed (13.9 s per burst) |
@@ -95,8 +95,10 @@ cskburn -s /dev/ttyUSB0 -C 6 -b 115200 -v --verify-all \
 
 ## 3. Capture the RX baseband
 
-The dump uses the UART TX line on the Kenwood connector, which is the line
-your programming cable receives on. Put the radio in **M17 mode** on the
+The dump is off by default: build with `-DC62_BASEBAND_DUMP=ON` (section 1)
+and flash that firmware first. It uses the UART TX line on the Kenwood
+connector, which is the line your programming cable receives on, and mutes
+the console log once audio starts. Put the radio in **M17 mode** on the
 wanted frequency. M17 mode applies the flat audio path: AF bypass, no
 emphasis, no DC filters and the wide `REG_43`. Then:
 
@@ -261,8 +263,8 @@ to the main one:
   gain: the demodulator then estimates them again at its next
   re-acquisition, within a few seconds.
 
-The baseband dump keeps working in T mode, to capture what the radio
-receives.
+A firmware built with the baseband dump keeps it working in T mode, to
+capture what the radio receives.
 
 ## 6. DMR mode
 

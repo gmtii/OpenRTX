@@ -53,7 +53,7 @@ target_sources(app
 #   C62_REG43_SWEEP_MS. Use it with the dump to measure each setting.
 #
 option(C62_WIDE_RX "Widest BK4819 RX filter in M17 mode" ON)
-option(C62_BASEBAND_DUMP "Stream raw RX baseband over UART" ON)
+option(C62_BASEBAND_DUMP "Stream raw RX baseband over UART" OFF)
 # The C62 programming cables top out at 115200 baud (11.5 kB/s), far below
 # the 96 kB/s of a 48 kHz s16 stream: use burst mode there. Streaming needs
 # at least 1500000 baud for s16 or 921600 for 12-bit samples.
