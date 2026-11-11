@@ -100,8 +100,14 @@ static void _ui_drawTetraInfo(void)
         gfx_drawSymbol(layout.line3_pos, layout.line3_symbol_size,
                        TEXT_ALIGN_LEFT, color_white,
                        SYMBOL_TRANSMISSION_TOWER);
-        gfx_print(layout.line3_pos, layout.line3_font, TEXT_ALIGN_CENTER,
-                  color_white, "%u-%u LA %u", ts.mcc, ts.mnc, ts.la);
+        // Or the carrier the call is followed to
+        if (ts.followHz != 0)
+            gfx_print(layout.line3_pos, layout.line3_font, TEXT_ALIGN_CENTER,
+                      yellow_fab413, "%u-%u carrier %u", ts.mcc, ts.mnc,
+                      ts.followCarrier);
+        else
+            gfx_print(layout.line3_pos, layout.line3_font, TEXT_ALIGN_CENTER,
+                      color_white, "%u-%u LA %u", ts.mcc, ts.mnc, ts.la);
 
         // Call state
         if (ts.callEncrypted) {
@@ -762,8 +768,13 @@ static void _ui_drawTetraDebug(void)
               "Sync %s  e%u%%  %+dHz", ts.sync ? "yes" : "no", ts.phaseErr,
               ts.carrierHz);
     pos.y += step;
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
-              "Lost o%u  resync r%u", ts.overruns, ts.resyncs);
+    if (ts.followHz != 0)
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413,
+                  "Lost o%u r%u  carrier %u", ts.overruns, ts.resyncs,
+                  ts.followCarrier);
+    else
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+                  "Lost o%u  resync r%u", ts.overruns, ts.resyncs);
     pos.y += step;
     if (ts.cell)
         gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
@@ -2813,7 +2824,11 @@ static void _ui_richTetra(void)
             state = "Idle";
             sc = rich_grey;
         }
-        if(ts.callId != 0)
+        // Followed to another carrier of the cell: say which
+        if(ts.followHz != 0)
+            sniprintf(detail, sizeof(detail), "call %u c%u", ts.callId,
+                      ts.followCarrier);
+        else if(ts.callId != 0)
             sniprintf(detail, sizeof(detail), "call %u", ts.callId);
         else
             detail[0] = '\0';

@@ -55,6 +55,9 @@ struct tetraStatus {
     uint8_t lastCallSlots;     /**< Its timeslots, bit 0 = TN1 */
     uint8_t lastTrafficMarker; /**< Usage marker of the last traffic slot */
     uint8_t lastTrafficTn;     /**< Timeslot of the last traffic slot */
+
+    uint16_t followCarrier; /**< Carrier of the call followed, if followHz */
+    uint32_t followHz;      /**< Frequency listened to there, 0 if none */
 };
 
 /**
@@ -84,6 +87,17 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev);
  * @param overrun: because samples were lost.
  */
 void tetraStatus_lostSync(bool overrun);
+
+/**
+ * Frequency to listen to: that of a clear call set up on another carrier of
+ * the cell, while it lasts, else the configured one. The carriers of a cell
+ * share their timing and scrambling, so the demodulator and libtetra keep
+ * going across the change: only the radio frequency moves.
+ *
+ * @param mainHz: configured receive frequency, the cell's main carrier.
+ * @return frequency to tune the receiver to, in Hz.
+ */
+uint32_t tetraStatus_followHz(uint32_t mainHz);
 
 /**
  * Count a demodulator re-acquisition or restart. libtetra keeps its burst

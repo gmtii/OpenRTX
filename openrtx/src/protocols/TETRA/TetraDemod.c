@@ -330,8 +330,9 @@ static size_t symbol(struct tetraDemod *dm, float d, int8_t *soft)
     dm->errPow += ERR_ALPHA * (e * e - dm->errPow);
     dm->errFast += ERR_FAST_ALPHA * (e * e - dm->errFast);
 
-    /* Lost the signal for long: start again */
-    if (dm->acquired && !converging && dm->errPow >= BAD_ERROR * BAD_ERROR) {
+    /* Lost the signal for long: start again (not while held) */
+    if (dm->acquired && !converging && !dm->hold
+        && dm->errPow >= BAD_ERROR * BAD_ERROR) {
         if (++dm->badSymbols >= BAD_SYMBOLS) {
             reacquire(dm);
             return 0;
@@ -489,6 +490,18 @@ void tetraDemod_scope(const struct tetraDemod *dm, float *d, float *y,
 uint32_t tetraDemod_rotations(const struct tetraDemod *dm)
 {
     return dm->rotations;
+}
+
+void tetraDemod_setHold(struct tetraDemod *dm, bool hold)
+{
+    if (dm->hold && !hold) {
+        /* The error measured while held (another carrier, noise between
+         * the call's slots) must not count against the main carrier */
+        dm->badSymbols = 0;
+        dm->errPow = 0;
+        dm->errFast = 0;
+    }
+    dm->hold = hold;
 }
 
 uint32_t tetraDemod_reacquisitions(const struct tetraDemod *dm)

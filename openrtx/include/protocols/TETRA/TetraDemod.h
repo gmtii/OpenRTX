@@ -89,6 +89,7 @@ struct tetraDemod {
     uint32_t badSymbols; /* Consecutive symbols with a high phase error */
     uint32_t reacquired; /* Number of re-acquisitions */
     uint32_t slips;      /* Number of timing jumps followed */
+    bool hold;           /* No re-acquisition: see tetraDemod_setHold() */
     /* Last symbols, for the UI: integrated discriminator value, and the
      * phase change decided from it (NAN while warming up) */
     float scopeD[TETRA_DEMOD_SCOPE];
@@ -137,6 +138,19 @@ int tetraDemod_carrierOffset(const struct tetraDemod *dm);
  * again (the phase error stayed high), plus the timing jumps it followed.
  */
 uint32_t tetraDemod_reacquisitions(const struct tetraDemod *dm);
+
+/**
+ * Hold the acquisition: a high phase error no longer makes the demodulator
+ * acquire the signal again. For a traffic carrier followed from the main
+ * one: it may carry only the call's timeslot, with noise in between, and its
+ * symbol timing is the main carrier's, which a re-acquisition would lose
+ * (libtetra finds the slots there by that timing alone). The gain and
+ * offset fit still adapts while the error is low, in the call's slot.
+ *
+ * @param dm: demodulator.
+ * @param hold: true to hold, false to let it re-acquire again.
+ */
+void tetraDemod_setHold(struct tetraDemod *dm, bool hold);
 
 /**
  * @return number of times the carrier offset was corrected by a quarter

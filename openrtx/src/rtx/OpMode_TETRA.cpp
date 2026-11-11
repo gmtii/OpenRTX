@@ -49,6 +49,8 @@ OpMode_TETRA::OpMode_TETRA()
     , settleBlocks(0)
     , reacqCount(0)
     , reacqWindowStart(0)
+    , tunedHz(0)
+    , following(false)
     , basebandPath(-1)
     , basebandId(-1)
 {
@@ -68,10 +70,13 @@ void OpMode_TETRA::initDemod()
 #endif
     demodJumps = tetraDemod_reacquisitions(&demod);
     reacqCount = 0;
+    /* Still on a followed carrier: keep holding */
+    tetraDemod_setHold(&demod, following);
 }
 
 void OpMode_TETRA::reset()
 {
+    following = false;
     initDemod();
     settleBlocks = SETTLE_BLOCKS;
     resync(false);
@@ -154,12 +159,16 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
     if (startRx) {
         startSampling();
         radio_enableRx();
+        tunedHz = rtx->rxFrequency;
         startRx = false;
     }
 
-    /* A new frequency is a new cell: start from scratch */
-    if (newCfg)
+    /* A new frequency is a new cell: start from scratch. The radio driver
+     * tuned the configured frequency again. */
+    if (newCfg) {
         reset();
+        tunedHz = rtx->rxFrequency;
+    }
 
     if (audioPath_getStatus(basebandPath) != PATH_OPEN) {
         sleepFor(0, 10);
@@ -219,6 +228,22 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
     }
 
     tetra_tmo_push_soft(&tmo, soft, n);
+
+    /*
+     * Follow a clear call to another carrier of the cell, and come back.
+     * On the followed carrier the demodulator holds the main carrier's
+     * timing whatever the error: the carrier may carry only the call's
+     * timeslot, with noise in between, and a re-acquisition loses the timing
+     * libtetra finds the slots by.
+     */
+    const uint32_t wantHz = tetraStatus_followHz(rtx->rxFrequency);
+    if (wantHz != tunedHz) {
+        radio_retuneRx(wantHz);
+        tunedHz = wantHz;
+        following = (wantHz != rtx->rxFrequency);
+        tetraDemod_setHold(&demod, following);
+        reacqCount = 0;
+    }
 
     tetraStatus_setDemod(tetraDemod_phaseError(&demod),
                          tetraDemod_carrierOffset(&demod));

@@ -221,6 +221,18 @@ ESP32-P4 SDR: end-to-end encrypted calls (flagged in their setup) show
 calls set up before the radio tuned in show `Encrypted?` and stay silent.
 Their traffic would only decode to noise.
 
+A clear speech call set up on another carrier of the cell is followed
+there: the radio tunes to that carrier, one call at a time, and comes back
+to the main carrier when the call is released, after 3 s without its
+traffic (6 s for the first traffic), or when the burst synchronisation is
+lost. The carriers of a cell share their timing and scrambling, so the
+demodulator keeps the main carrier's timing meanwhile and does not
+re-acquire. The carrier number shows on the call card (`call 12 c813`),
+on line 3 of the default screen and on the diagnostics page, in yellow.
+With a group filter set, only that group's calls are followed, and a call
+being played keeps the radio on its carrier. Tune to the cell's main
+carrier: the other carriers are found from it.
+
 **\*** on the VFO or memory screen cycles the TETRA pages; on a page, a
 number goes straight to another (shown on the top bar, `3/8`), **0** back
 to the main one:

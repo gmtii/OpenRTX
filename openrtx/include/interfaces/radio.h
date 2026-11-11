@@ -100,6 +100,17 @@ void radio_updateConfiguration();
 rssi_t radio_getRssi();
 
 /**
+ * Move the receiver to another frequency while it is on, keeping the rest of
+ * the configuration; the next radio_enableRx() or radio_updateConfiguration()
+ * tunes it back to the configured one. For the TETRA mode, which follows a
+ * call to another carrier of the cell: only radios building it
+ * (CONFIG_TETRA) implement this. Called from the RTX thread.
+ *
+ * @param freq: frequency to receive on, in Hz.
+ */
+void radio_retuneRx(const freq_t freq);
+
+/**
  * Prepare the radio for a spectrum sweep: receiver on, audio muted, fixed
  * gain, so that RSSI readings on different frequencies can be compared.
  * Only radios building the spectrum view (CONFIG_SPECTRUM) implement the

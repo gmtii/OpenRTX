@@ -483,6 +483,22 @@ void radio_enableRx()
     radioStatus = RX;
 }
 
+void radio_retuneRx(const freq_t freq)
+{
+    if (radioStatus != RX)
+        return;
+
+    // The LNA of the band, as radio_enableRx()
+    if (freq < 174000000) {
+        gpioDev_clear(&c62_bk4819_gpio, GPIO_UHF_RX_LNA);
+        gpioDev_set(&c62_bk4819_gpio, GPIO_VHF_RX_LNA);
+    } else {
+        gpioDev_clear(&c62_bk4819_gpio, GPIO_VHF_RX_LNA);
+        gpioDev_set(&c62_bk4819_gpio, GPIO_UHF_RX_LNA);
+    }
+    bk4819_set_freq(&c62_bk4819, freq);
+}
+
 void radio_enableTx()
 {
     if (config->txDisable == 1 || rxOnlyMode(radioMode))

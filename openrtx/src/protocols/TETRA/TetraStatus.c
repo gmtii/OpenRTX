@@ -77,6 +77,25 @@ static uint32_t filterGssi;
 
 static struct knownCall calls[MAX_CALLS]; /* Under statusMutex */
 
+/*
+ * A clear call set up on another carrier of the cell is followed there, one
+ * at a time, until it is released, its traffic stops, or the burst
+ * synchronisation is lost. Under statusMutex.
+ */
+#define FOLLOW_IDLE_MS 3000
+/* Until the first traffic slot after the change: the demodulator may have to
+ * start afresh on the new carrier first */
+#define FOLLOW_ACQUIRE_MS 6000
+
+static struct {
+    bool active;
+    uint16_t carrier;
+    uint16_t callId;
+    uint8_t usageMarker;
+    int32_t offsetHz;      /* From the main carrier */
+    long long lastTraffic; /* May be in the future, see followCall() */
+} follow;
+
 static void countCalls(void)
 {
     status.knownCalls = 0;
@@ -188,6 +207,68 @@ static enum tetraTrafficCall matchTraffic(const struct tetra_traffic *t,
     }
 
     return TETRA_TRAFFIC_UNKNOWN;
+}
+
+/* Under statusMutex */
+static void stopFollow(const char *why)
+{
+    if (follow.active) {
+        CALL_PRINT("TETRA back to the main carrier: %s\n", why);
+        /* The timeslot played was the followed carrier's */
+        lockTn = 0;
+    }
+    follow.active = false;
+}
+
+/**
+ * Follow a clear speech call set up on another carrier of the cell.
+ * Under statusMutex.
+ */
+static void followCall(const struct tetra_call *c)
+{
+    if (c->what == TETRA_CALL_RELEASE) {
+        if (follow.active && c->call_id == follow.callId)
+            stopFollow("call released");
+        return;
+    }
+    if (follow.active || c->carrier == 0xffff || c->encrypted
+        || c->circuit_type != 0)
+        return;
+    /* Another call is being played here: stay with it (see lockTn) */
+    if (lockHeld(getTick()))
+        return;
+    /* With a group filter, only that group's calls */
+    if (filterGssi != 0 && (!c->group || c->dst_ssi != filterGssi))
+        return;
+
+    struct tetraCellInfo cell;
+    tetraCell_get(&cell);
+    if (!cell.sysinfo || c->carrier == cell.carrier)
+        return;
+
+    follow.active = true;
+    follow.carrier = c->carrier;
+    follow.callId = c->call_id;
+    follow.usageMarker = c->usage_marker;
+    follow.offsetHz = ((int32_t)c->carrier - (int32_t)cell.carrier) * 25000;
+    /* The first traffic gets FOLLOW_ACQUIRE_MS instead of FOLLOW_IDLE_MS */
+    follow.lastTraffic = getTick() + (FOLLOW_ACQUIRE_MS - FOLLOW_IDLE_MS);
+    CALL_PRINT("TETRA call %u: following it to carrier %u\n", c->call_id,
+               c->carrier);
+}
+
+uint32_t tetraStatus_followHz(uint32_t mainHz)
+{
+    pthread_mutex_lock(&statusMutex);
+    if (follow.active && getTick() - follow.lastTraffic > FOLLOW_IDLE_MS)
+        stopFollow("no traffic");
+    uint32_t hz = mainHz;
+    if (follow.active)
+        hz = (uint32_t)((int32_t)mainHz + follow.offsetHz);
+    status.followCarrier = follow.active ? follow.carrier : 0;
+    status.followHz = follow.active ? hz : 0;
+    pthread_mutex_unlock(&statusMutex);
+    return hz;
 }
 
 void tetra_getStatus(struct tetraStatus *out)
@@ -305,8 +386,10 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
     switch (ev->type) {
         case TETRA_EV_SYNC:
             status.sync = ev->u.sync.locked;
-            if (!status.sync)
+            if (!status.sync) {
                 status.call = false;
+                stopFollow("synchronisation lost");
+            }
             break;
 
         case TETRA_EV_CELL: {
@@ -327,6 +410,7 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
 
         case TETRA_EV_CALL:
             onCall(&ev->u.call);
+            followCall(&ev->u.call);
             break;
 
         case TETRA_EV_TRAFFIC: {
@@ -347,6 +431,12 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
                 status.callId = t->call_id;
             status.call = true;
             lastCall = lastVoice = getTick();
+            /* Never earlier: just after a change it is in the future */
+            if (follow.active
+                && (t->call_id == follow.callId
+                    || t->usage_marker == follow.usageMarker)
+                && lastVoice > follow.lastTraffic)
+                follow.lastTraffic = lastVoice;
             break;
         }
 
@@ -373,6 +463,8 @@ void tetraStatus_reset(void)
     pthread_mutex_lock(&statusMutex);
     memset(&status, 0, sizeof(status));
     memset(calls, 0, sizeof(calls));
+    /* A new frequency is a new cell: nothing to follow from the old one */
+    memset(&follow, 0, sizeof(follow));
     pthread_mutex_unlock(&statusMutex);
     tetraSds_reset();
     tetraHeard_reset();

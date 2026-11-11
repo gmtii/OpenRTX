@@ -56,6 +56,8 @@ private:
     unsigned settleBlocks;     // Sample blocks still to drop
     unsigned reacqCount;       // Re-acquisitions within the window
     uint32_t reacqWindowStart; // Start of that window, in ms
+    uint32_t tunedHz;          // Receiver frequency: configured or followed
+    bool following;            // On another carrier of the cell, for a call
     pathId basebandPath;
     streamId basebandId;
 };
