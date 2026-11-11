@@ -133,6 +133,7 @@ if(C62_TETRA)
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraDemod.c
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraCell.c
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraHeard.c
+    ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraScan.c
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraSds.c
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraStatus.c
     ${OPENRTX_ROOT}/openrtx/src/rtx/OpMode_TETRA.cpp)

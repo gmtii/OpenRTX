@@ -11,6 +11,7 @@
 #include "interfaces/delays.h"
 #include "protocols/TETRA/TetraCell.h"
 #include "protocols/TETRA/TetraHeard.h"
+#include "protocols/TETRA/TetraScan.h"
 #include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraStatus.h"
@@ -469,6 +470,7 @@ void tetraStatus_reset(void)
     tetraSds_reset();
     tetraHeard_reset();
     tetraCell_reset();
+    tetraScan_reset();
 }
 
 void tetraStatus_lostSync(bool overrun)
@@ -478,6 +480,14 @@ void tetraStatus_lostSync(bool overrun)
     status.resyncs++;
     if (overrun)
         status.overruns++;
+    pthread_mutex_unlock(&statusMutex);
+}
+
+void tetraStatus_scanDone(void)
+{
+    pthread_mutex_lock(&statusMutex);
+    stopFollow("site scan");
+    status.call = false;
     pthread_mutex_unlock(&statusMutex);
 }
 

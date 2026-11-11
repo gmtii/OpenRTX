@@ -100,6 +100,12 @@ void tetraStatus_lostSync(bool overrun);
 uint32_t tetraStatus_followHz(uint32_t mainHz);
 
 /**
+ * A site discovery scan is over: the radio is back on the main carrier,
+ * whose burst synchronisation starts again, and no call is followed.
+ */
+void tetraStatus_scanDone(void);
+
+/**
  * Count a demodulator re-acquisition or restart. libtetra keeps its burst
  * synchronisation: it reports a real loss of lock itself.
  */
