@@ -42,6 +42,7 @@ static const color_t info_grey = { 160, 160, 160, 255 };
 #include "protocols/TETRA/TetraStatus.h"
 #include "protocols/TETRA/TetraCell.h"
 #include "protocols/TETRA/TetraHeard.h"
+#include "protocols/TETRA/TetraScan.h"
 #include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraDemod.h"
@@ -1228,17 +1229,104 @@ static void _ui_drawTetraCell(void)
 }
 
 /**
- * TETRA neighbours page: the cells announced by the serving one.
+ * TETRA neighbours page, after a site scan: the cells visited, reached
+ * first, then by RSSI. UP / DOWN pick one, ENTER tunes the VFO to it.
  */
-static void _ui_drawTetraNeighbours(void)
+static void _ui_drawTetraScan(ui_state_t *ui_state)
+{
+    static UI_BSS struct tetraScanResult sr[TETRA_SCAN_MAX];
+    int done;
+    int n = tetraScan_results(sr, &done);
+    const bool running = tetraScan_running();
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = 11;
+    point_t pos = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
+    static const color_t reached = { 63, 191, 95, 255 };
+
+    if(running)
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413,
+                  "Scanning %d/%d", done, n);
+    else
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "Scan %d", n);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey,
+              running ? "ESC stop" : "OK=tune #=redo");
+
+    // The picked row stays within the list and on screen
+    if(ui_state->tetra_sds_sel >= n && n > 0)
+        ui_state->tetra_sds_sel = n - 1;
+    const int rows = (CONFIG_SCREEN_HEIGHT - pos.y - 2) / step;
+    int first = 0;
+    if(rows > 0 && ui_state->tetra_sds_sel >= rows)
+        first = ui_state->tetra_sds_sel - rows + 1;
+
+    const int16_t room = CONFIG_SCREEN_WIDTH - 2 * layout.horizontal_pad;
+    for(int i = first; i < n && i < first + rows; i++)
+    {
+        const struct tetraScanResult *r = &sr[i];
+        char left[32], right[16], mhz[12];
+        _ui_mhz(mhz, sizeof(mhz), r->dlHz);
+        int o;
+        if(r->cellId == TETRA_SCAN_SERVING)
+            o = sniprintf(left, sizeof(left), "* %s", mhz);
+        else
+            o = sniprintf(left, sizeof(left), "#%u %s", r->cellId, mhz);
+
+        color_t rc = info_grey;
+        if(!r->measured)
+            sniprintf(right, sizeof(right), "...");
+        else if(r->sync)
+        {
+            sniprintf(right, sizeof(right), "e%u%% %d", r->phaseErr, r->rssi);
+            rc = reached;
+        }
+        else
+            sniprintf(right, sizeof(right), "%ddBm", r->rssi);
+
+        // The cell found there, if it fits: its network, else its LA
+        if(r->cell)
+            sniprintf(left + o, sizeof(left) - o, " %u-%u", r->mcc, r->mnc);
+        if(r->sysinfo
+           && gfx_getTextWidth(font, left) + 6 + gfx_getTextWidth(font, right)
+              > room)
+            sniprintf(left + o, sizeof(left) - o, " LA%u", r->la);
+        if(gfx_getTextWidth(font, left) + 6 + gfx_getTextWidth(font, right)
+           > room)
+            left[o] = '\0';
+
+        pos.y += step;
+        color_t lc = r->measured ? color_white : info_grey;
+        if(i == ui_state->tetra_sds_sel)
+        {
+            gfx_drawRect((point_t){ 0, (int16_t)(pos.y - 9) },
+                         CONFIG_SCREEN_WIDTH, step, lc, true);
+            lc = color_black;
+            rc = color_black;
+        }
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, lc, "%s", left);
+        gfx_print(pos, font, TEXT_ALIGN_RIGHT, rc, "%s", right);
+    }
+}
+
+/**
+ * TETRA neighbours page: the cells announced by the serving one, or the
+ * results of a site scan (# starts one).
+ */
+static void _ui_drawTetraNeighbours(ui_state_t *ui_state)
 {
     static UI_BSS struct tetraNeighbourInfo nb[TETRA_NEIGHBOURS_KEPT];
+    if(tetraScan_running() || tetraScan_count() > 0)
+    {
+        _ui_drawTetraScan(ui_state);
+        return;
+    }
+
     int n = tetraCell_neighbours(nb, TETRA_NEIGHBOURS_KEPT);
     const fontSize_t font = FONT_SIZE_6PT;
     const int16_t step = 11;
     point_t pos = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
 
     gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "Neighbours %d", n);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey, "# scan");
     if(n == 0)
     {
         pos.y += 2 * step;
@@ -1441,7 +1529,7 @@ static bool _ui_drawTetraPage(ui_state_t *ui_state)
             _ui_drawTetraCell();
             break;
         case TETRA_PAGE_NEIGHBOURS:
-            _ui_drawTetraNeighbours();
+            _ui_drawTetraNeighbours(ui_state);
             break;
         case TETRA_PAGE_SCOPE:
             _ui_drawTetraScope();

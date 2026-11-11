@@ -272,7 +272,20 @@ to the main one:
   time.
 - **Neighbours** (7): the cells the serving one announces, by frequency,
   with their load (`lo`, `med`, `hi`), `S` if synchronised, and their
-  network or location area when not the serving cell's.
+  network or location area when not the serving cell's. **#** scans them
+  (site discovery): the radio visits the serving cell (`*`) and each
+  neighbour of known frequency, measures its RSSI over 120 ms, and, above
+  -118 dBm, tries to synchronise to it for up to 2.5 s, then waits up to
+  1.5 s more for its system information. The list is then sorted: the
+  cells reached first, in green with their phase error and RSSI
+  (`e14% -92`) and the network found there, then the others by RSSI. A
+  scan takes from a few seconds to about a minute with 12 neighbours;
+  meanwhile there is no speech and no call following, but the serving
+  cell, the calls and the SDS heard are kept, and the radio comes back to
+  the main carrier at the end. **UP** / **DOWN** pick a cell of the list
+  and **ENTER** tunes the VFO to it, keeping the TX offset (from a memory,
+  the VFO takes the memory's channel with the new frequency). **ESC**
+  stops the scan, then goes back to the cells announced.
 - **Symbols** (8): the phase change of the last 256 symbols on a circle
   (four clusters at +-45 and +-135 degrees on a clean signal), and the
   histogram of the raw discriminator values with marks at the four levels

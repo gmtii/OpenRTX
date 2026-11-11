@@ -74,6 +74,7 @@
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraStatus.h"
+#include "protocols/TETRA/TetraScan.h"
 #include "protocols/TETRA/TetraSds.h"
 #endif
 
@@ -1397,7 +1398,38 @@ extern uint32_t _ui_tetraGroupAt(int i);
  *
  * @return true if the key was taken.
  */
-static bool _ui_fsm_tetraPages(kbd_msg_t msg)
+/**
+ * Tune the VFO to the cell picked in the site scan results, keeping the TX
+ * offset. From a memory, the VFO takes that memory's channel (its mode,
+ * power, bandwidth) with the new frequency.
+ */
+static void _ui_tetraTuneScanned(uint8_t sel, bool *sync_rtx)
+{
+    static struct tetraScanResult sr[TETRA_SCAN_MAX];
+    int n = tetraScan_results(sr, NULL);
+    if(sel >= n)
+        return;
+
+    freq_t freq = sr[sel].dlHz;
+    if(!_ui_freq_check_limits(freq))
+        return;
+
+    tetraScan_cancel();
+    int32_t shift = (int32_t)(state.channel.tx_frequency
+                            - state.channel.rx_frequency);
+    state.channel.rx_frequency = freq;
+    state.channel.tx_frequency = freq + shift;
+    state.vfo_channel = state.channel;
+    state.ui_screen = MAIN_VFO;
+    ui_state.tetra_page = TETRA_PAGE_MAIN;
+    ui_state.tetra_sds_sel = 0;
+    *sync_rtx = true;
+    vp_announceFrequencies(state.channel.rx_frequency,
+                           state.channel.tx_frequency,
+                           vp_getVoiceLevelQueueFlags());
+}
+
+static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
 {
     if(state.channel.mode != OPMODE_TETRA)
         return false;
@@ -1431,6 +1463,48 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg)
         if(gssi != 0)
             tetraStatus_setFilter((gssi == tetraStatus_filter()) ? 0 : gssi);
         return true;
+    }
+
+    // Neighbours page: # scans the serving cell and the neighbours; ESC
+    // stops the scan, then goes back to the cells announced
+    if(ui_state.tetra_page == TETRA_PAGE_NEIGHBOURS)
+    {
+        if(msg.keys & KEY_HASH)
+        {
+            tetraScan_start();
+            return true;
+        }
+        if((msg.keys & KEY_ESC) && tetraScan_running())
+        {
+            tetraScan_cancel();
+            return true;
+        }
+        if((msg.keys & KEY_ESC) && tetraScan_count() > 0)
+        {
+            tetraScan_reset();
+            return true;
+        }
+        if(tetraScan_count() > 0)
+        {
+            int n = tetraScan_count();
+            if(msg.keys & (KEY_UP | KNOB_RIGHT))
+            {
+                if(ui_state.tetra_sds_sel > 0)
+                    ui_state.tetra_sds_sel--;
+                return true;
+            }
+            if(msg.keys & (KEY_DOWN | KNOB_LEFT))
+            {
+                if(ui_state.tetra_sds_sel + 1 < n)
+                    ui_state.tetra_sds_sel++;
+                return true;
+            }
+            if(msg.keys & KEY_ENTER)
+            {
+                _ui_tetraTuneScanned(ui_state.tetra_sds_sel, sync_rtx);
+                return true;
+            }
+        }
     }
 
     // List pages: SDS, groups and radios
@@ -2176,7 +2250,7 @@ void ui_updateFSM(bool *sync_rtx)
                 {
 #ifdef CONFIG_TETRA
                     // TETRA pages: *, and the SDS page's keys
-                    if(_ui_fsm_tetraPages(msg))
+                    if(_ui_fsm_tetraPages(msg, sync_rtx))
                     {
                     }
                     else
@@ -2432,7 +2506,7 @@ void ui_updateFSM(bool *sync_rtx)
                 {
 #ifdef CONFIG_TETRA
                     // TETRA pages: *, and the SDS page's keys
-                    if(_ui_fsm_tetraPages(msg))
+                    if(_ui_fsm_tetraPages(msg, sync_rtx))
                     {
                     }
                     else
