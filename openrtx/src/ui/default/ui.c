@@ -77,6 +77,9 @@
 #include "protocols/TETRA/TetraScan.h"
 #include "protocols/TETRA/TetraSds.h"
 #endif
+#ifdef CONFIG_DMR_RX
+#include "protocols/DMR/dmr_track.h"
+#endif
 
 /* UI main screen functions, their implementation is in "ui_main.c" */
 extern void _ui_drawMainBackground();
@@ -1389,6 +1392,48 @@ static bool _ui_fsm_aisPage(kbd_msg_t msg)
 }
 #endif
 
+#ifdef CONFIG_DMR_RX
+/**
+ * DMR station page of the VFO and memory screens: * opens and closes it,
+ * UP/DOWN go through the stations heard with a position, ESC leaves it.
+ *
+ * @return true if the key was taken.
+ */
+static bool _ui_fsm_dmrPage(kbd_msg_t msg)
+{
+    if(state.channel.mode != OPMODE_DMR)
+        return false;
+
+    if(msg.keys & KEY_STAR)
+    {
+        ui_state.dmr_page = !ui_state.dmr_page;
+        ui_state.dmr_sel = 0;
+        return true;
+    }
+    if(!ui_state.dmr_page)
+        return false;
+
+    if(msg.keys & (KEY_UP | KNOB_RIGHT))
+    {
+        if(ui_state.dmr_sel > 0)
+            ui_state.dmr_sel--;
+        return true;
+    }
+    if(msg.keys & (KEY_DOWN | KNOB_LEFT))
+    {
+        if(ui_state.dmr_sel + 1 < dmr_track_count())
+            ui_state.dmr_sel++;
+        return true;
+    }
+    if(msg.keys & KEY_ESC)
+    {
+        ui_state.dmr_page = false;
+        return true;
+    }
+    return false;
+}
+#endif
+
 #ifdef CONFIG_TETRA
 extern uint32_t _ui_tetraGroupAt(int i);
 
@@ -2269,6 +2314,13 @@ void ui_updateFSM(bool *sync_rtx)
                     }
                     else
 #endif
+#ifdef CONFIG_DMR_RX
+                    // DMR station page
+                    if(_ui_fsm_dmrPage(msg))
+                    {
+                    }
+                    else
+#endif
                     if(msg.keys & KEY_ENTER)
                     {
                         // Save current main state
@@ -2521,6 +2573,13 @@ void ui_updateFSM(bool *sync_rtx)
 #ifdef CONFIG_AIS
                     // AIS station page
                     if(_ui_fsm_aisPage(msg))
+                    {
+                    }
+                    else
+#endif
+#ifdef CONFIG_DMR_RX
+                    // DMR station page
+                    if(_ui_fsm_dmrPage(msg))
                     {
                     }
                     else

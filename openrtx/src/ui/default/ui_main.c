@@ -193,9 +193,12 @@ static void _ui_drawTetraLine1(ui_state_t *ui_state)
 #include "protocols/DMR/dmr_demod.h"
 #include "protocols/DMR/dmr_proto.h"
 #include "protocols/DMR/dmr_voice.h"
+#include "protocols/DMR/dmr_track.h"
 
 /* A DMR call stays on the main screen this long after its last burst */
 #define DMR_CALL_SHOW_MS 1500
+
+static bool _ui_dmrLastFix(char *buf, size_t len);
 
 /**
  * Pick the DMR slot whose call takes over the main screen: the one being
@@ -312,6 +315,12 @@ static void _ui_drawDmrInfo(void)
     gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
               color_white, "DMR %s CC%d", ds.bs ? "RPT" : (ms ? "MS" : "DM"),
               cc);
+
+    // The latest LRRP position, under the frequency
+    char fix[40];
+    if(_ui_dmrLastFix(fix, sizeof(fix)))
+        gfx_print(layout.line4_pos, layout.line4_font, TEXT_ALIGN_CENTER,
+                  color_white, "%s", fix);
 }
 
 /**
@@ -874,7 +883,8 @@ static bool _ui_drawAisPage(ui_state_t *ui_state);
 #endif
 #endif
 
-#if defined(CONFIG_TETRA) || defined(CONFIG_ACARS) || defined(CONFIG_AIS)
+#if defined(CONFIG_TETRA) || defined(CONFIG_ACARS) || defined(CONFIG_AIS) \
+    || defined(CONFIG_DMR_RX)
 /**
  * Time since a tick: "12s", "5m", "2h".
  */
@@ -887,6 +897,118 @@ static void _ui_ago(char *buf, size_t len, long long tick)
         sniprintf(buf, len, "%ldm", age / 60);
     else
         sniprintf(buf, len, "%ldh", age / 3600);
+}
+#endif
+
+#ifdef CONFIG_DMR_RX
+/**
+ * A latitude or longitude in degrees, four decimals and a hemisphere
+ * letter: "28.1234N". No float formatting in the printf used.
+ */
+static void _ui_dmrCoord(char *buf, size_t len, float v, char pos, char neg)
+{
+    long a = (long)(v * 10000.0f + ((v < 0) ? -0.5f : 0.5f));
+    char h = (a < 0) ? neg : pos;
+    if(a < 0)
+        a = -a;
+    sniprintf(buf, len, "%ld.%04ld%c", a / 10000, a % 10000, h);
+}
+
+/**
+ * DMR station page, in place of the VFO or memory screen: one station heard
+ * with an LRRP position, whole, UP and DOWN to go through them, the latest
+ * fix first.
+ *
+ * @return true if it was drawn.
+ */
+static bool _ui_drawDmrPage(ui_state_t *ui_state)
+{
+    if((last_state.channel.mode != OPMODE_DMR) || !ui_state->dmr_page)
+        return false;
+
+    static UI_BSS dmr_station_t list[DMR_TRACK_MAX];
+    int n = dmr_track_get(list, DMR_TRACK_MAX);
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = 11;
+    point_t pos = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
+
+    _ui_drawMainTop(ui_state);
+    if(n == 0)
+    {
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "LRRP");
+        pos.y += 2 * step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "No position yet");
+        return true;
+    }
+    if(ui_state->dmr_sel >= n)
+        ui_state->dmr_sel = n - 1;
+    const dmr_station_t *s = &list[ui_state->dmr_sel];
+
+    char ago[8], grid[7], lat[16], lon[16];
+    _ui_ago(ago, sizeof(ago), s->tick);
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "LRRP %d/%d",
+              ui_state->dmr_sel + 1, n);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, yellow_fab413, "%s ago", ago);
+
+    // Name, else the radio ID alone
+    pos.y += step;
+    if(s->alias[0] != '\0')
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%.20s", s->alias);
+    else
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%lu",
+                  (unsigned long)s->src);
+
+    pos.y += step;
+    dmr_latlon_to_grid(s->lat, s->lon, grid);
+    if(s->alias[0] != '\0')
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%lu",
+                  (unsigned long)s->src);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, yellow_fab413, "%s", grid);
+
+    pos.y += step;
+    _ui_dmrCoord(lat, sizeof(lat), s->lat, 'N', 'S');
+    _ui_dmrCoord(lon, sizeof(lon), s->lon, 'E', 'W');
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s %s", lat, lon);
+
+    if(s->speed_kmh >= 0 || s->dir >= 0)
+    {
+        char buf[24];
+        size_t o = 0;
+        buf[0] = '\0';
+        if(s->speed_kmh >= 0)
+            o += sniprintf(buf, sizeof(buf), "%d km/h ", s->speed_kmh);
+        if(s->dir >= 0 && o < sizeof(buf))
+            sniprintf(buf + o, sizeof(buf) - o, "dir %03d", s->dir);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", buf);
+    }
+
+    pos.y += step;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%u report%s",
+              s->reports, (s->reports == 1) ? "" : "s");
+    return true;
+}
+
+/**
+ * The latest LRRP fix in one line: "2145678 IL18qd 3m", the alias in place
+ * of the ID when there is one.
+ *
+ * @return false if no position was heard.
+ */
+static bool _ui_dmrLastFix(char *buf, size_t len)
+{
+    dmr_station_t s;
+    if(dmr_track_get(&s, 1) == 0)
+        return false;
+
+    char grid[7], ago[8];
+    dmr_latlon_to_grid(s.lat, s.lon, grid);
+    _ui_ago(ago, sizeof(ago), s.tick);
+    if(s.alias[0] != '\0')
+        sniprintf(buf, len, "%.10s %s %s", s.alias, grid, ago);
+    else
+        sniprintf(buf, len, "%lu %s %s", (unsigned long)s.src, grid, ago);
+    return true;
 }
 #endif
 
@@ -1554,6 +1676,11 @@ void _ui_drawMainVFO(ui_state_t* ui_state)
         return;
     #endif
 
+    #ifdef CONFIG_DMR_RX
+    if(_ui_drawDmrPage(ui_state))
+        return;
+    #endif
+
     #ifdef CONFIG_TETRA
     if(_ui_drawTetraPage(ui_state))
         return;
@@ -1601,6 +1728,11 @@ void _ui_drawMainMEM(ui_state_t* ui_state)
     #endif
     #if defined(CONFIG_UI_RICH_MAIN) && defined(CONFIG_AIS)
     if(_ui_drawAisPage(ui_state))
+        return;
+    #endif
+
+    #ifdef CONFIG_DMR_RX
+    if(_ui_drawDmrPage(ui_state))
         return;
     #endif
 
@@ -3056,7 +3188,12 @@ static void _ui_richDmr(void)
             state = "Voice";
             sc = rich_green;
         }
-        sniprintf(detail, sizeof(detail), "TS%d", slot + 1);
+        // The talker's position, if sent, after the slot
+        if(si.gps_valid)
+            sniprintf(detail, sizeof(detail), "TS%d %s", slot + 1,
+                      si.gps_grid);
+        else
+            sniprintf(detail, sizeof(detail), "TS%d", slot + 1);
 
         static const color_t bg = { 29, 24, 48, 255 };
         _ui_richCard(31, 60, bg, rich_violet, si.group ? "TG" : "ID", dst,
@@ -3069,10 +3206,22 @@ static void _ui_richDmr(void)
     _ui_richPrint(RICH_PAD, 57, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
                   "Level %d  DC %+d  lost %lu%s", (int)ds.level, (int)ds.dc,
                   (unsigned long)ds.overruns, ds.inverted ? " inv" : "");
+    // The latest LRRP position, else no call
+    char fix[40];
     gfx_drawRect((point_t){ RICH_PAD, 68 }, CONFIG_SCREEN_WIDTH - 2 * RICH_PAD,
                  17, rich_dark, false);
-    _ui_richPrint(RICH_PAD + 3, 72, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
-                  "No call");
+    if(_ui_dmrLastFix(fix, sizeof(fix)))
+    {
+        int16_t bx = _ui_richBadge(RICH_PAD + 3, 71, 11, FONT_SIZE_6PT, "GPS",
+                                   rich_violet, false);
+        _ui_richPrint(bx + 4, 72, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, color_white,
+                      "%s", fix);
+    }
+    else
+    {
+        _ui_richPrint(RICH_PAD + 3, 72, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      rich_grey, "No call");
+    }
     _ui_richMeter(89, rich_violet, false, false);
 }
 #endif

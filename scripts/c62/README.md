@@ -321,6 +321,21 @@ because the radio could not keep up (should stay 0), and `inv` when the
 symbols arrive inverted. The green LED is on while the radio is locked.
 Call events (start, IDs, alias, end) are also printed on the console.
 
+**Positions.** Motorola LRRP location reports, sent as packet data (UDP
+port 4001, confirmed or unconfirmed), are decoded, as is the GPS Info LC
+some radios put in the voice. Each radio's latest LRRP fix is kept, up to
+16 radios; changing the frequency or leaving the mode clears them.
+
+- On the main screen the latest fix shows when no call is (`GPS 2145678
+  IL18qd 3m`, the alias in place of the ID when one was heard), and a
+  talker's locator after the slot during a call (`TS1 IL18qd`).
+- **\*** opens the station page: alias and ID, Maidenhead locator,
+  latitude and longitude, speed and heading when sent, number of reports
+  and age. **UP**/**DOWN** go through the radios, latest fix first;
+  **\*** or **ESC** close it.
+
+The reports are printed on the console too.
+
 **Voice.** DMR speech is AMBE+2, decoded with
 [mbelib](https://github.com/lwvmobile/mbelib) (ISC licence). The AMBE+2
 algorithm is covered by patents in some countries, so mbelib is not fetched

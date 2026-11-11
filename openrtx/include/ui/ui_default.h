@@ -265,6 +265,11 @@ typedef struct ui_state_t
     bool ais_page;
     uint8_t ais_sel;
 #endif
+#ifdef CONFIG_DMR_RX
+    // DMR station position page on the VFO screen (*), station shown
+    bool dmr_page;
+    uint8_t dmr_sel;
+#endif
 #ifdef CONFIG_UI_SAVE_CHANNEL
     // Save VFO screen: # pressed once on a memory, again deletes it
     bool save_delete_armed;
