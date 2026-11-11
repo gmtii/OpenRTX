@@ -46,7 +46,7 @@ struct tetraStatus {
 
     uint16_t phaseErr;   /**< Demodulator RMS phase error, % of pi/4 */
     uint16_t overruns;   /**< Sample blocks lost: the radio was too slow */
-    uint16_t resyncs;    /**< Burst synchronisation restarts */
+    uint16_t resyncs;    /**< Burst sync and demodulator restarts */
     int16_t carrierHz;   /**< Carrier offset estimate */
 
     uint8_t knownCalls;  /**< Calls whose signalling was received */
@@ -84,6 +84,12 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev);
  * @param overrun: because samples were lost.
  */
 void tetraStatus_lostSync(bool overrun);
+
+/**
+ * Count a demodulator re-acquisition or restart. libtetra keeps its burst
+ * synchronisation: it reports a real loss of lock itself.
+ */
+void tetraStatus_demodRestart(void);
 
 /**
  * Update the demodulator figures.

@@ -187,9 +187,14 @@ The demodulator figures on line 1, e.g. `e11% -234Hz o0 r1`:
 - `o`: overruns, blocks of samples lost because the radio could not keep
   up. This should stay at 0: if it counts up, the radio is short of CPU
   time, and speech will break up.
-- `r`: restarts of the burst synchronisation: at start, after an overrun,
-  or after the demodulator followed a jump in the signal's timing. A
-  replayed recording causes one at every loop.
+- `r`: restarts: of the burst synchronisation, at start and after an
+  overrun, and of the demodulator, when it re-acquires or follows a jump in
+  the signal's timing. A replayed recording causes one at every loop. A
+  demodulator restart keeps the burst synchronisation, and with it the cell,
+  the call and the SDS being received: libtetra finds its bursts again
+  within two symbols. Without synchronisation, or after three re-acquisitions
+  within 5 s, the demodulator starts afresh. The first 240 ms after tuning
+  are skipped while the radio audio settles.
 
 How it works: the BK4819 runs the same flat, wide receive path as M17
 (`REG_43 = 0x7e28`, AF bypass). The 48 kHz discriminator output goes to

@@ -44,6 +44,7 @@ public:
     }
 
 private:
+    void initDemod();
     void reset();
     void resync(bool overrun);
     void startSampling();
@@ -52,6 +53,9 @@ private:
     bool startRx;
     unsigned dataErrors; // Consecutive failed reads of the sample stream
     uint32_t demodJumps; // Demodulator slips and re-acquisitions seen
+    unsigned settleBlocks;     // Sample blocks still to drop
+    unsigned reacqCount;       // Re-acquisitions within the window
+    uint32_t reacqWindowStart; // Start of that window, in ms
     pathId basebandPath;
     streamId basebandId;
 };

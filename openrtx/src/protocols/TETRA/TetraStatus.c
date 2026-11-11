@@ -389,6 +389,13 @@ void tetraStatus_lostSync(bool overrun)
     pthread_mutex_unlock(&statusMutex);
 }
 
+void tetraStatus_demodRestart(void)
+{
+    pthread_mutex_lock(&statusMutex);
+    status.resyncs++;
+    pthread_mutex_unlock(&statusMutex);
+}
+
 void tetraStatus_setDemod(unsigned phaseErr, int carrierHz)
 {
     pthread_mutex_lock(&statusMutex);
