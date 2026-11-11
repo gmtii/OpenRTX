@@ -13,6 +13,7 @@
 #include "interfaces/platform.h"
 #include "interfaces/radio.h"
 #include "protocols/TETRA/TetraDemod.h"
+#include "protocols/TETRA/TetraScan.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraStatus.h"
 #include "rtx/OpMode_TETRA.hpp"
@@ -30,6 +31,18 @@
 /* Re-acquisitions this close together restart the demodulator afresh */
 #define REACQ_STUCK 3
 #define REACQ_WINDOW_MS 5000
+
+/*
+ * Site discovery, per cell visited: the RSSI is the mean of the second half
+ * of the settling time; below SCAN_NOISE_DBM there is nothing to sync to.
+ * Otherwise wait up to SCAN_SYNC_MS for the burst synchronisation (the
+ * sync burst comes about once a second), then up to SCAN_SYSINFO_MS more
+ * for the system information, measuring the phase error meanwhile.
+ */
+#define SCAN_NOISE_DBM -118
+#define SCAN_SYNC_MS 2500
+#define SCAN_SYSINFO_MS 1500
+#define SCAN_ERR_BLOCKS 10 /* Phase error blocks wanted before leaving */
 
 /* Large state: static, there is only one TETRA mode */
 static int16_t baseband[2 * HALF_SAMPLES];
@@ -51,6 +64,15 @@ OpMode_TETRA::OpMode_TETRA()
     , reacqWindowStart(0)
     , tunedHz(0)
     , following(false)
+    , scanning(false)
+    , scanSync(false)
+    , scanIdx(0)
+    , scanCount(0)
+    , scanBlocks(0)
+    , scanRssiSum(0)
+    , scanErrSum(0)
+    , scanErrBlocks(0)
+    , scanDeadline(0)
     , basebandPath(-1)
     , basebandId(-1)
 {
@@ -76,6 +98,7 @@ void OpMode_TETRA::initDemod()
 
 void OpMode_TETRA::reset()
 {
+    scanning = false;
     following = false;
     initDemod();
     settleBlocks = SETTLE_BLOCKS;
@@ -90,12 +113,120 @@ void OpMode_TETRA::reset()
  */
 void OpMode_TETRA::resync(bool overrun)
 {
+    initTmo(tetraStatus_onEvent);
+    tetraStatus_lostSync(overrun);
+}
+
+void OpMode_TETRA::initTmo(void (*cb)(void *, const struct tetra_event *))
+{
     struct tetra_rx_config cfg;
     memset(&cfg, 0, sizeof(cfg));
-    cfg.cb = tetraStatus_onEvent;
+    cfg.cb = cb;
     cfg.promiscuous = true;
     tetra_tmo_init(&tmo, &cfg);
-    tetraStatus_lostSync(overrun);
+}
+
+/*
+ * Site discovery: visit the serving cell and each neighbour it announces,
+ * measuring the RSSI and trying to synchronise to it. It runs in place of
+ * normal reception, through the same demodulator and libtetra receiver,
+ * whose events go to TetraScan instead: the serving cell, the calls and the
+ * SDS heard are kept. No speech and no call following meanwhile.
+ */
+void OpMode_TETRA::scanBegin(rtxStatus_t *const rtx)
+{
+    scanCount = tetraScan_begin(rtx->rxFrequency);
+    if (scanCount == 0) {
+        tetraScan_end();
+        return;
+    }
+    scanning = true;
+    following = false;
+    platform_ledOff(GREEN);
+    scanVisit(0);
+}
+
+void OpMode_TETRA::scanVisit(int i)
+{
+    scanIdx = i;
+    const uint32_t hz = tetraScan_freq(i);
+    radio_retuneRx(hz);
+    tunedHz = hz;
+    initDemod();
+    initTmo(tetraScan_onEvent);
+    scanSync = false;
+    scanBlocks = 0;
+    scanRssiSum = 0;
+    scanErrSum = 0;
+    scanErrBlocks = 0;
+}
+
+void OpMode_TETRA::scanNext(rtxStatus_t *const rtx)
+{
+    const uint16_t err = scanErrBlocks ? scanErrSum / scanErrBlocks : 0;
+    tetraScan_visited(scanIdx, err);
+    if (scanIdx + 1 < scanCount)
+        scanVisit(scanIdx + 1);
+    else
+        scanEnd(rtx);
+}
+
+void OpMode_TETRA::scanEnd(rtxStatus_t *const rtx)
+{
+    tetraScan_end();
+    scanning = false;
+    radio_retuneRx(rtx->rxFrequency);
+    tunedHz = rtx->rxFrequency;
+    initDemod();
+    settleBlocks = SETTLE_BLOCKS;
+    resync(false);
+    tetraStatus_scanDone();
+}
+
+void OpMode_TETRA::scanStep(rtxStatus_t *const rtx, const dataBlock_t &block)
+{
+    /* Cancelled from the UI */
+    if (!tetraScan_running()) {
+        scanEnd(rtx);
+        return;
+    }
+
+    /* Settling: the RSSI from its second half */
+    if (scanBlocks < SETTLE_BLOCKS) {
+        scanBlocks++;
+        if (scanBlocks > SETTLE_BLOCKS / 2)
+            scanRssiSum += radio_getRssi();
+        if (scanBlocks < SETTLE_BLOCKS)
+            return;
+
+        const int16_t rssi = scanRssiSum / (SETTLE_BLOCKS / 2);
+        tetraScan_setRssi(scanIdx, rssi);
+        if (rssi < SCAN_NOISE_DBM) {
+            scanNext(rtx);
+            return;
+        }
+        scanDeadline = getTick() + SCAN_SYNC_MS;
+        return;
+    }
+
+    size_t n = tetraDemod_process(&demod, block.data, block.len, soft);
+    tetra_tmo_push_soft(&tmo, soft, n);
+
+    const long long now = getTick();
+    if (tetraScan_synced(scanIdx)) {
+        if (!scanSync) {
+            scanSync = true;
+            scanDeadline = now + SCAN_SYSINFO_MS;
+        }
+        scanErrSum += tetraDemod_phaseError(&demod);
+        scanErrBlocks++;
+        if (tetraScan_sysinfo(scanIdx) && scanErrBlocks >= SCAN_ERR_BLOCKS) {
+            scanNext(rtx);
+            return;
+        }
+    }
+    if (now >= scanDeadline)
+        scanNext(rtx);
 }
 
 void OpMode_TETRA::enable()
@@ -107,6 +238,10 @@ void OpMode_TETRA::enable()
 
 void OpMode_TETRA::disable()
 {
+    if (scanning) {
+        scanning = false;
+        tetraScan_end();
+    }
     startRx = false;
     stopSampling();
     tetraSpeech_stop();
@@ -182,13 +317,22 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
      */
     dataBlock_t block = inputStream_getData(basebandId);
     if (block.data == NULL) {
-        if (dataErrors++ == 0)
+        /* A scan visit has no slot grid to lose */
+        if (dataErrors++ == 0 && !scanning)
             resync(true);
         else
             sleepFor(0, 10);
         return;
     }
     dataErrors = 0;
+
+    /* Site discovery, in place of normal reception */
+    if (!scanning && tetraScan_running())
+        scanBegin(rtx);
+    if (scanning) {
+        scanStep(rtx, block);
+        return;
+    }
 
     if (settleBlocks > 0) {
         settleBlocks--;

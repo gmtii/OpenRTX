@@ -12,6 +12,8 @@
 #include "OpMode.hpp"
 #include "protocols/TETRA/TetraSpeech.h"
 
+struct tetra_event;
+
 /**
  * TETRA TMO downlink receive mode: demodulates the radio's flat FM
  * discriminator output (pi/4-DQPSK by integrate-and-dump) and decodes it
@@ -47,6 +49,12 @@ private:
     void initDemod();
     void reset();
     void resync(bool overrun);
+    void initTmo(void (*cb)(void *, const struct tetra_event *));
+    void scanBegin(rtxStatus_t *const rtx);
+    void scanVisit(int i);
+    void scanNext(rtxStatus_t *const rtx);
+    void scanEnd(rtxStatus_t *const rtx);
+    void scanStep(rtxStatus_t *const rtx, const dataBlock_t &block);
     void startSampling();
     void stopSampling();
 
@@ -58,6 +66,15 @@ private:
     uint32_t reacqWindowStart; // Start of that window, in ms
     uint32_t tunedHz;          // Receiver frequency: configured or followed
     bool following;            // On another carrier of the cell, for a call
+    bool scanning;             // Site discovery in place of reception
+    bool scanSync;             // The cell visited reached synchronisation
+    int scanIdx;               // Cell visited
+    int scanCount;             // Cells to visit
+    unsigned scanBlocks;       // Blocks since the visit started, settling
+    int32_t scanRssiSum;       // RSSI readings while settling, dBm
+    uint32_t scanErrSum;       // Phase error readings while in sync
+    unsigned scanErrBlocks;    // Number of them
+    long long scanDeadline;    // End of the wait for sync or sysinfo
     pathId basebandPath;
     streamId basebandId;
 };
