@@ -170,6 +170,7 @@ if(C62_DMR)
     ${C62_DMR_SRC}/dmr_fec.c
     ${C62_DMR_SRC}/dmr_data.c
     ${C62_DMR_SRC}/dmr_lrrp.c
+    ${C62_DMR_SRC}/dmr_track.c
     ${C62_DMR_SRC}/dmr_trellis.c
     ${C62_DMR_SRC}/dmr_voice.c
     ${C62_DMR_SRC}/DmrSpeech.c

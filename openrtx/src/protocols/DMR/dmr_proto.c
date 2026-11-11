@@ -132,6 +132,7 @@ void dmr_proto_reset(void)
     memset(&s_stats, 0, sizeof(s_stats));
     dmr_voice_reset();
     dmr_data_reset();
+    dmr_track_clear();
 
     DMR_LOCK(s_lock);
     s_pub_slot[0] = s_slot[0].info;
