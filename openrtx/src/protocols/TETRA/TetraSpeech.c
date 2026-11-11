@@ -209,6 +209,16 @@ void tetraSpeech_start(void)
         return;
     }
     pthread_attr_setstack(&attr, stack, THREAD_STACK);
+    /*
+     * One step above the rtx and UI threads, which run at the default
+     * priority with no time slicing: there playback waited for each
+     * demodulation block and screen redraw, and the speaker got gaps of
+     * silence. Playback mostly blocks on the audio buffers and sleeps when
+     * idle, so it does not starve them. POSIX 1 is Zephyr priority 13, the
+     * default 0 is 14.
+     */
+    struct sched_param priority = { .sched_priority = 1 };
+    pthread_attr_setschedparam(&attr, &priority);
 #else
     pthread_attr_setstacksize(&attr, THREAD_STACK);
 #endif
