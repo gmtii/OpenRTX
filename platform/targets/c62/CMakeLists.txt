@@ -125,9 +125,19 @@ if(C62_TETRA)
                         "'west update --group-filter +csk6', or build with "
                         "-DC62_TETRA=OFF")
   endif()
+  # Receive only, in the clear: the TEA and identity decryption code is not
+  # built. TMO uplink bursts are recognised, not decoded, as before the
+  # uplink decoder came to libtetra.
+  set(TETRA_ENABLE_CRYPTO OFF)
+  set(TETRA_UPLINK_DECODE OFF)
   add_subdirectory(${C62_LIBTETRA} ${CMAKE_BINARY_DIR}/libtetra)
-  # Build it with the Zephyr compiler flags (CPU, FPU, ABI)
-  target_link_libraries(tetra PRIVATE zephyr_interface)
+  # Build it with the Zephyr compiler flags (CPU, FPU, ABI). Copied, not
+  # linked: libtetra exports its target for install, and zephyr_interface
+  # is in no export set.
+  foreach(prop COMPILE_OPTIONS COMPILE_DEFINITIONS INCLUDE_DIRECTORIES)
+    set_property(TARGET tetra APPEND PROPERTY ${prop}
+                 $<TARGET_PROPERTY:zephyr_interface,INTERFACE_${prop}>)
+  endforeach()
   target_link_libraries(app PRIVATE tetra)
   target_sources(app PRIVATE
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraDemod.c

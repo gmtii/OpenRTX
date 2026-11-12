@@ -107,7 +107,7 @@ manifest:
     # TETRA receiver library, for the C62 TETRA mode
     - name: libtetra
       remote: sp5wwp
-      revision: 187bb545a321c8e99425c15fcbcf871fc5d0aac6
+      revision: 05b32aa52295fe617d37e546f148bb47ca9affc1
       path: modules/lib/libtetra
       groups:
         - csk6
