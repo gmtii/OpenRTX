@@ -58,6 +58,23 @@
  */
 #define ROTATION_HOLD 36000
 
+/*
+ * Burst mode: a burst is present when the best timing phase has this much
+ * less decision error than the mean of all phases (the same on noise).
+ */
+#ifndef BURST_PRESENT
+#define BURST_PRESENT 0.75f
+#endif
+/*
+ * Once the window is all burst, the timing only moves this much of the way
+ * to each new estimate: the estimates of single windows jitter.
+ */
+#ifndef BURST_TRACK
+#define BURST_TRACK 0.05f
+#endif
+/* Symbols come out half a window late, the window centred on them */
+#define BURST_DELAY (TETRA_DEMOD_BURST_WIN / 2)
+
 /* Synchronisation training sequence y, 38 bits, first bit in bit 37 */
 static const uint64_t SYNC_SEQ = 0x30673A7067ULL;
 #define SYNC_MASK 0x3FFFFFFFFFULL
@@ -418,6 +435,111 @@ static void timing(struct tetraDemod *dm)
     dm->drift += step;
 }
 
+/**
+ * Linear interpolation of the integrated signal at the next symbol position
+ * plus a fractional offset.
+ */
+static float sampleAtF(const struct tetraDemod *dm, float offset)
+{
+    float p = dm->nextFrac + offset;
+    int whole = (int)floorf(p);
+    float f = p - whole;
+    uint32_t i = dm->nextInt + whole;
+    return dm->hist[i & HIST_MASK] * (1 - f)
+         + dm->hist[(i + 1) & HIST_MASK] * f;
+}
+
+/**
+ * Burst mode: the decision error of the newest symbol at the 8 phases goes
+ * into the window, then the symbol at the window's centre comes out at the
+ * phase that is best over the window.
+ *
+ * @return number of soft bits written (0 or 2).
+ */
+static size_t burstSymbol(struct tetraDemod *dm, int8_t *soft)
+{
+    float *c = dm->bcost[dm->bpos];
+    for (int o = 0; o < SPS; o++) {
+        float v = sampleAt(dm, o - SPS / 2);
+        float e = decisionError(dm->gain * (v - dm->offset));
+        dm->bsum[o] += e * e - c[o];
+        c[o] = e * e;
+    }
+    dm->bpos = (dm->bpos + 1) % TETRA_DEMOD_BURST_WIN;
+
+    int best = 0;
+    float mean = 0;
+    for (int o = 0; o < SPS; o++) {
+        mean += dm->bsum[o];
+        if (dm->bsum[o] < dm->bsum[best])
+            best = o;
+    }
+    mean /= SPS;
+    dm->present = dm->bsum[best] < BURST_PRESENT * mean;
+
+    if (dm->present) {
+        float cm = dm->bsum[(best + SPS - 1) % SPS];
+        float c0 = dm->bsum[best];
+        float cp = dm->bsum[(best + 1) % SPS];
+        float den = cm - 2 * c0 + cp;
+        float t = best - SPS / 2 + (den > 0 ? 0.5f * (cm - cp) / den : 0);
+        /*
+         * The phase nearest the one in use: a whole symbol away is the same
+         * phase, and jumping there would drop or repeat a symbol mid-burst
+         */
+        while (t - dm->boff > SPS / 2)
+            t -= SPS;
+        while (t - dm->boff < -SPS / 2)
+            t += SPS;
+        if (dm->brun < TETRA_DEMOD_BURST_WIN)
+            dm->boff = t;
+        else
+            dm->boff += BURST_TRACK * (t - dm->boff);
+        dm->brun++;
+        dm->bquiet = 0;
+    } else {
+        dm->brun = 0;
+        if (dm->bquiet < UINT32_MAX)
+            dm->bquiet++;
+    }
+    /*
+     * Back near the nominal timing once the last burst is out (the symbols
+     * come out half a window late), with a margin so that a timing near a
+     * symbol's edge does not flip; far off, at worst, even in a burst
+     */
+    float limit = (dm->bquiet > TETRA_DEMOD_BURST_WIN) ? SPS / 2 + 1 : 2 * SPS;
+    if (dm->boff > limit)
+        dm->boff -= SPS;
+    else if (dm->boff < -limit)
+        dm->boff += SPS;
+
+    /* The clock offset learned on the continuous signal still holds */
+    advance(dm, dm->rate);
+    dm->drift += dm->rate;
+
+    float v = sampleAtF(dm, dm->boff - BURST_DELAY * SPS);
+    return symbol(dm, v, soft);
+}
+
+void tetraDemod_setBurst(struct tetraDemod *dm, bool burst)
+{
+    if (burst && !dm->burst) {
+        memset(dm->bcost, 0, sizeof(dm->bcost));
+        memset(dm->bsum, 0, sizeof(dm->bsum));
+        dm->bpos = 0;
+        dm->boff = 0;
+        dm->brun = 0;
+        dm->bquiet = 0;
+        dm->present = false;
+    }
+    dm->burst = burst;
+}
+
+bool tetraDemod_present(const struct tetraDemod *dm)
+{
+    return dm->burst && dm->present;
+}
+
 size_t tetraDemod_process(struct tetraDemod *dm, const int16_t *in, size_t n,
                           int8_t *soft)
 {
@@ -444,9 +566,13 @@ size_t tetraDemod_process(struct tetraDemod *dm, const int16_t *in, size_t n,
 
             /* Symbols whose window (up to +SPS/2 + 1) is complete */
             while ((int32_t)(dm->written - dm->nextInt) >= SPS / 2 + 2) {
-                timing(dm);
-                float v = sampleAt(dm, 0);
-                out += symbol(dm, v, soft + out);
+                if (dm->burst) {
+                    out += burstSymbol(dm, soft + out);
+                } else {
+                    timing(dm);
+                    float v = sampleAt(dm, 0);
+                    out += symbol(dm, v, soft + out);
+                }
                 dm->nextInt += SPS;
             }
         }

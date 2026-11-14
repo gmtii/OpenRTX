@@ -35,9 +35,13 @@ extern "C" {
 
 #define TETRA_DEMOD_IN_RATE 48000
 #define TETRA_DEMOD_SPS 8
-#define TETRA_DEMOD_HIST 64   /* 144 kHz samples kept, power of two */
+#define TETRA_DEMOD_HIST 256  /* 144 kHz samples kept, power of two */
 #define TETRA_DEMOD_INTERP 12 /* FIR taps per polyphase branch */
 #define TETRA_DEMOD_EQ_TAPS 9
+/* Burst mode: symbols over which each symbol's timing is chosen */
+#ifndef TETRA_DEMOD_BURST_WIN
+#define TETRA_DEMOD_BURST_WIN 32
+#endif
 /* Symbols kept for the symbol page of the UI */
 #define TETRA_DEMOD_SCOPE 256
 
@@ -90,6 +94,15 @@ struct tetraDemod {
     uint32_t reacquired; /* Number of re-acquisitions */
     uint32_t slips;      /* Number of timing jumps followed */
     bool hold;           /* No re-acquisition: see tetraDemod_setHold() */
+    /* Burst mode, see tetraDemod_setBurst() */
+    bool burst;
+    bool present; /* A signal in the window now */
+    float bcost[TETRA_DEMOD_BURST_WIN][TETRA_DEMOD_SPS];
+    float bsum[TETRA_DEMOD_SPS]; /* Sum of bcost over the window */
+    unsigned bpos;
+    float boff; /* Timing of the burst, samples from the nominal one */
+    uint32_t brun;   /* Symbols the burst has been present */
+    uint32_t bquiet; /* Symbols without a burst */
     /* Last symbols, for the UI: integrated discriminator value, and the
      * phase change decided from it (NAN while warming up) */
     float scopeD[TETRA_DEMOD_SCOPE];
@@ -151,6 +164,25 @@ uint32_t tetraDemod_reacquisitions(const struct tetraDemod *dm);
  * @param hold: true to hold, false to let it re-acquire again.
  */
 void tetraDemod_setHold(struct tetraDemod *dm, bool hold);
+
+/**
+ * Burst mode, for signals that come and go: the TMO uplink, where each
+ * radio's bursts arrive with their own timing, and silence in between.
+ * Each symbol's timing is chosen afresh over the TETRA_DEMOD_BURST_WIN
+ * symbols around it, so the symbols come out half a window late. The
+ * timing loop stops; the clock offset, gain, offset and equalizer stay as
+ * learned on a continuous signal (the downlink), adapting only on bursts.
+ * Use with tetraDemod_setHold(), so silence causes no re-acquisition.
+ *
+ * @param dm: demodulator.
+ * @param burst: true for burst mode, false for a continuous signal.
+ */
+void tetraDemod_setBurst(struct tetraDemod *dm, bool burst);
+
+/**
+ * @return true if, in burst mode, a burst is being received.
+ */
+bool tetraDemod_present(const struct tetraDemod *dm);
 
 /**
  * @return number of times the carrier offset was corrected by a quarter
