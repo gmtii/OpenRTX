@@ -1369,7 +1369,8 @@ static bool _ui_fsm_acarsPage(kbd_msg_t msg)
 #ifdef CONFIG_AIS
 /**
  * AIS station page of the VFO and memory screens: * opens and closes it,
- * UP/DOWN go through the stations, ESC leaves it.
+ * UP/DOWN go through the stations, ENTER shows them on a radar, ESC leaves
+ * it.
  *
  * @return true if the key was taken.
  */
@@ -1382,10 +1383,29 @@ static bool _ui_fsm_aisPage(kbd_msg_t msg)
     {
         ui_state.ais_page = !ui_state.ais_page;
         ui_state.ais_sel = 0;
+#ifdef CONFIG_QTH_GRID
+        ui_state.radar = false;
+#endif
         return true;
     }
     if(!ui_state.ais_page)
         return false;
+
+#ifdef CONFIG_QTH_GRID
+    // ENTER: radar or station; # on the radar: next range, after the
+    // automatic one
+    if(msg.keys & KEY_ENTER)
+    {
+        ui_state.radar = !ui_state.radar;
+        return true;
+    }
+    if(ui_state.radar && (msg.keys & KEY_HASH))
+    {
+        ui_state.radar_range = (ui_state.radar_range + 1)
+                             % (UI_RADAR_RANGES + 1);
+        return true;
+    }
+#endif
 
     if(msg.keys & (KEY_UP | KNOB_RIGHT))
     {
@@ -1411,7 +1431,8 @@ static bool _ui_fsm_aisPage(kbd_msg_t msg)
 #ifdef CONFIG_DMR_RX
 /**
  * DMR station page of the VFO and memory screens: * opens and closes it,
- * UP/DOWN go through the stations heard with a position, ESC leaves it.
+ * UP/DOWN go through the stations heard with a position, ENTER shows them
+ * on a radar, ESC leaves it.
  *
  * @return true if the key was taken.
  */
@@ -1424,10 +1445,29 @@ static bool _ui_fsm_dmrPage(kbd_msg_t msg)
     {
         ui_state.dmr_page = !ui_state.dmr_page;
         ui_state.dmr_sel = 0;
+#ifdef CONFIG_QTH_GRID
+        ui_state.radar = false;
+#endif
         return true;
     }
     if(!ui_state.dmr_page)
         return false;
+
+#ifdef CONFIG_QTH_GRID
+    // ENTER: radar or station; # on the radar: next range, after the
+    // automatic one
+    if(msg.keys & KEY_ENTER)
+    {
+        ui_state.radar = !ui_state.radar;
+        return true;
+    }
+    if(ui_state.radar && (msg.keys & KEY_HASH))
+    {
+        ui_state.radar_range = (ui_state.radar_range + 1)
+                             % (UI_RADAR_RANGES + 1);
+        return true;
+    }
+#endif
 
     if(msg.keys & (KEY_UP | KNOB_RIGHT))
     {

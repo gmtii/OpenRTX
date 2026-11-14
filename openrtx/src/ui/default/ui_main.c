@@ -971,6 +971,281 @@ static void _ui_ago(char *buf, size_t len, long long tick)
 }
 #endif
 
+#if (defined(CONFIG_AIS) || defined(CONFIG_DMR_RX)) && defined(CONFIG_QTH_GRID)
+#include <math.h>
+
+/* Radar of the AIS and DMR station pages, centred on the own QTH */
+#define RADAR_R 52 /* Radius, pixels */
+#define RADAR_KM_PER_DEG 111.2f
+
+static const color_t radar_ring = { 120, 100, 20, 255 };
+static const color_t radar_cyan = { 72, 208, 200, 255 };
+#ifdef CONFIG_AIS
+static const color_t radar_green = { 63, 191, 95, 255 };
+static const color_t radar_magenta = { 220, 90, 220, 255 };
+#endif
+
+/* One station on the radar */
+struct radarPoint {
+    float lat, lon; /* Degrees, + = N / E */
+    int16_t dir;    /* Course or heading, degrees, -1 unknown */
+    color_t color;
+};
+
+/**
+ * The own QTH, the centre of its Maidenhead locator (CONFIG_QTH_GRID).
+ *
+ * @return false if the locator is not a valid one of 6 characters.
+ */
+static bool _ui_qth(float *lat, float *lon)
+{
+    const char *g = CONFIG_QTH_GRID;
+    if(strlen(g) < 6)
+        return false;
+    int f0 = (g[0] | 0x20) - 'a', f1 = (g[1] | 0x20) - 'a';
+    int s0 = g[2] - '0', s1 = g[3] - '0';
+    int u0 = (g[4] | 0x20) - 'a', u1 = (g[5] | 0x20) - 'a';
+    if(f0 < 0 || f0 > 17 || f1 < 0 || f1 > 17 || s0 < 0 || s0 > 9
+       || s1 < 0 || s1 > 9 || u0 < 0 || u0 > 23 || u1 < 0 || u1 > 23)
+        return false;
+    *lon = -180.0f + f0 * 20 + s0 * 2 + (u0 + 0.5f) * (5.0f / 60);
+    *lat = -90.0f + f1 * 10 + s1 + (u1 + 0.5f) * (2.5f / 60);
+    return true;
+}
+
+/**
+ * Distance and bearing from the own QTH, flat earth: good to a few hundred
+ * kilometres, all a VHF radio hears.
+ *
+ * @param km: distance, kilometres.
+ * @param brg: bearing, degrees from north, clockwise.
+ */
+static void _ui_distBrg(float lat0, float lon0, float lat, float lon,
+                        float *km, float *brg)
+{
+    float dx = (lon - lon0) * cosf(lat0 * (3.14159265f / 180))
+             * RADAR_KM_PER_DEG;
+    float dy = (lat - lat0) * RADAR_KM_PER_DEG;
+    *km = sqrtf(dx * dx + dy * dy);
+    *brg = atan2f(dx, dy) * (180 / 3.14159265f);
+    if(*brg < 0)
+        *brg += 360;
+}
+
+/**
+ * "23.4" or "123": a distance with one decimal under 100.
+ */
+static void _ui_radarDist(char *buf, size_t len, float d)
+{
+    if(d < 100)
+    {
+        long t = lroundf(d * 10);
+        sniprintf(buf, len, "%ld.%ld", t / 10, t % 10);
+    }
+    else
+    {
+        sniprintf(buf, len, "%ld", lroundf(d));
+    }
+}
+
+/**
+ * A short line from the centre, at a bearing, between two radii.
+ */
+static void _ui_radarRay(point_t c, float brg, float r0, float r1,
+                         color_t color)
+{
+    float a = brg * (3.14159265f / 180);
+    float sx = sinf(a), cy = cosf(a);
+    gfx_drawLine((point_t){ (int16_t)(c.x + lroundf(sx * r0)),
+                            (int16_t)(c.y - lroundf(cy * r0)) },
+                 (point_t){ (int16_t)(c.x + lroundf(sx * r1)),
+                            (int16_t)(c.y - lroundf(cy * r1)) },
+                 color);
+}
+
+/**
+ * Radar on the left of the screen, north up, centred on the own QTH: rings
+ * at the range and half of it. A station moving is a triangle pointing
+ * along its course, else a diamond; the picked one is yellow and circled.
+ * Beyond the range, a tick on the outer ring at its bearing.
+ *
+ * @param pts: the stations.
+ * @param n: their number.
+ * @param sel: the picked one, -1 none.
+ * @param ranges: the ranges in the unit, smallest first.
+ * @param nranges: their number.
+ * @param rangeIdx: 0 the smallest one holding every station, else
+ * ranges[rangeIdx - 1].
+ * @param unitKm: kilometres in the unit.
+ * @return the range used, in the unit.
+ */
+static float _ui_drawRadar(const struct radarPoint *pts, int n, int sel,
+                           const float *ranges, int nranges, uint8_t rangeIdx,
+                           float unitKm)
+{
+    float lat0, lon0;
+    _ui_qth(&lat0, &lon0);
+    const point_t c = { (int16_t)(RADAR_R + 2),
+                        (int16_t)(layout.top_h + 4 + RADAR_R) };
+
+    float range;
+    if(rangeIdx > 0 && rangeIdx <= nranges)
+    {
+        range = ranges[rangeIdx - 1];
+    }
+    else
+    {
+        float far = 0;
+        for(int i = 0; i < n; i++)
+        {
+            float km, brg;
+            _ui_distBrg(lat0, lon0, pts[i].lat, pts[i].lon, &km, &brg);
+            if(km / unitKm > far)
+                far = km / unitKm;
+        }
+        range = ranges[nranges - 1];
+        for(int k = 0; k < nranges; k++)
+        {
+            if(far * 1.05f <= ranges[k])
+            {
+                range = ranges[k];
+                break;
+            }
+        }
+    }
+
+    gfx_drawCircle(c, RADAR_R, radar_ring);
+    gfx_drawCircle(c, RADAR_R / 2, radar_ring);
+    gfx_drawLine((point_t){ c.x, (int16_t)(c.y - RADAR_R) },
+                 (point_t){ c.x, (int16_t)(c.y - RADAR_R + 5) }, color_white);
+    gfx_drawLine((point_t){ (int16_t)(c.x - 3), c.y },
+                 (point_t){ (int16_t)(c.x + 3), c.y }, color_white);
+    gfx_drawLine((point_t){ c.x, (int16_t)(c.y - 3) },
+                 (point_t){ c.x, (int16_t)(c.y + 3) }, color_white);
+
+    // The picked station last, over the others
+    for(int k = 0; k <= n; k++)
+    {
+        int i = (k < n) ? k : sel;
+        if(i < 0 || i >= n || (k < n && i == sel))
+            continue;
+        const struct radarPoint *p = &pts[i];
+        color_t color = (i == sel) ? yellow_fab413 : p->color;
+        float km, brg;
+        _ui_distBrg(lat0, lon0, p->lat, p->lon, &km, &brg);
+        float d = km / unitKm;
+        if(d > range)
+        {
+            _ui_radarRay(c, brg, RADAR_R - 5, RADAR_R + 1, color);
+            continue;
+        }
+
+        float a = brg * (3.14159265f / 180);
+        float r = d / range * RADAR_R;
+        point_t q = { (int16_t)(c.x + lroundf(sinf(a) * r)),
+                      (int16_t)(c.y - lroundf(cosf(a) * r)) };
+        if(p->dir >= 0)
+        {
+            float h = p->dir * (3.14159265f / 180);
+            point_t t = { (int16_t)(q.x + lroundf(sinf(h) * 6)),
+                          (int16_t)(q.y - lroundf(cosf(h) * 6)) };
+            point_t l = { (int16_t)(q.x + lroundf(sinf(h + 2.5f) * 4)),
+                          (int16_t)(q.y - lroundf(cosf(h + 2.5f) * 4)) };
+            point_t rr = { (int16_t)(q.x + lroundf(sinf(h - 2.5f) * 4)),
+                           (int16_t)(q.y - lroundf(cosf(h - 2.5f) * 4)) };
+            gfx_drawLine(t, l, color);
+            gfx_drawLine(l, rr, color);
+            gfx_drawLine(rr, t, color);
+        }
+        else
+        {
+            point_t up = { q.x, (int16_t)(q.y - 3) };
+            point_t dn = { q.x, (int16_t)(q.y + 3) };
+            point_t lf = { (int16_t)(q.x - 3), q.y };
+            point_t rt = { (int16_t)(q.x + 3), q.y };
+            gfx_drawLine(up, rt, color);
+            gfx_drawLine(rt, dn, color);
+            gfx_drawLine(dn, lf, color);
+            gfx_drawLine(lf, up, color);
+        }
+        if(i == sel)
+            gfx_drawCircle(q, 7, yellow_fab413);
+    }
+    return range;
+}
+
+/**
+ * Right of the radar: the range, the picked station's name, distance,
+ * bearing and age, and the keys.
+ */
+static void _ui_radarSide(const char *title, float range, uint8_t rangeIdx,
+                          const char *unit, int sel, int n, const char *name,
+                          float lat, float lon, long long tick)
+{
+    const fontSize_t font = FONT_SIZE_6PT;
+    const int16_t step = 11;
+    point_t pos = { (int16_t)(2 * RADAR_R + 8), (int16_t)(layout.top_h + 11) };
+    char d[12];
+
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "%s", title);
+    pos.y += step;
+    _ui_radarDist(d, sizeof(d), range);
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s%s%s",
+              rangeIdx ? "" : "A ", d, unit);
+
+    if(sel >= 0)
+    {
+        float lat0, lon0, km, brg;
+        _ui_qth(&lat0, &lon0);
+        _ui_distBrg(lat0, lon0, lat, lon, &km, &brg);
+        const float unitKm = (unit[0] == 'N') ? 1.852f : 1.0f;
+        char ago[8];
+        _ui_ago(ago, sizeof(ago), tick);
+
+        pos.y += step + 4;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%d/%d", sel + 1,
+                  n);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "%.8s", name);
+        pos.y += step;
+        _ui_radarDist(d, sizeof(d), km / unitKm);
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s%s", d, unit);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%03ld deg",
+                  lroundf(brg) % 360);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s ago", ago);
+    }
+    else
+    {
+        pos.y += step + 4;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "No position");
+    }
+
+    pos.y = CONFIG_SCREEN_HEIGHT - 3;
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "#=zoom");
+}
+
+/**
+ * "23.4 km 245 deg" from the own QTH, for the station pages.
+ */
+static void _ui_qthDistance(char *buf, size_t len, float lat, float lon,
+                            bool nm)
+{
+    float lat0, lon0, km, brg;
+    if(!_ui_qth(&lat0, &lon0))
+    {
+        buf[0] = '\0';
+        return;
+    }
+    _ui_distBrg(lat0, lon0, lat, lon, &km, &brg);
+    char d[12];
+    _ui_radarDist(d, sizeof(d), nm ? km / 1.852f : km);
+    sniprintf(buf, len, "%s %s %03ld deg from QTH", d, nm ? "NM" : "km",
+              lroundf(brg) % 360);
+}
+#endif
+
 #ifdef CONFIG_DMR_RX
 /**
  * A latitude or longitude in degrees, four decimals and a hemisphere
@@ -1015,6 +1290,33 @@ static bool _ui_drawDmrPage(ui_state_t *ui_state)
         ui_state->dmr_sel = n - 1;
     const dmr_station_t *s = &list[ui_state->dmr_sel];
 
+    #ifdef CONFIG_QTH_GRID
+    if(ui_state->radar)
+    {
+        static const float ranges[UI_RADAR_RANGES] = { 2, 5, 10, 20, 50,
+                                                       100, 200 };
+        static UI_BSS struct radarPoint pts[DMR_TRACK_MAX];
+        for(int i = 0; i < n; i++)
+        {
+            pts[i].lat = list[i].lat;
+            pts[i].lon = list[i].lon;
+            pts[i].dir = (list[i].speed_kmh > 0) ? list[i].dir : -1;
+            pts[i].color = radar_cyan;
+        }
+        float range = _ui_drawRadar(pts, n, ui_state->dmr_sel, ranges,
+                                    UI_RADAR_RANGES, ui_state->radar_range,
+                                    1.0f);
+        char name[12];
+        if(s->alias[0] != '\0')
+            sniprintf(name, sizeof(name), "%s", s->alias);
+        else
+            sniprintf(name, sizeof(name), "%lu", (unsigned long)s->src);
+        _ui_radarSide("LRRP", range, ui_state->radar_range, "km",
+                      ui_state->dmr_sel, n, name, s->lat, s->lon, s->tick);
+        return true;
+    }
+    #endif
+
     char ago[8], grid[7], lat[16], lon[16];
     _ui_ago(ago, sizeof(ago), s->tick);
     gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "LRRP %d/%d",
@@ -1040,6 +1342,16 @@ static bool _ui_drawDmrPage(ui_state_t *ui_state)
     _ui_dmrCoord(lat, sizeof(lat), s->lat, 'N', 'S');
     _ui_dmrCoord(lon, sizeof(lon), s->lon, 'E', 'W');
     gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s %s", lat, lon);
+
+    #ifdef CONFIG_QTH_GRID
+    char from[40];
+    _ui_qthDistance(from, sizeof(from), s->lat, s->lon, false);
+    if(from[0] != '\0')
+    {
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", from);
+    }
+    #endif
 
     if(s->speed_kmh >= 0 || s->dir >= 0)
     {
@@ -2989,6 +3301,48 @@ static bool _ui_drawAisPage(ui_state_t *ui_state)
         ui_state->ais_sel = n - 1;
     const struct aisShip *s = &list[ui_state->ais_sel];
 
+    #ifdef CONFIG_QTH_GRID
+    if(ui_state->radar)
+    {
+        // Class A green, B cyan, base stations yellow-white, aids to
+        // navigation magenta; only the stations with a position
+        static const float ranges[UI_RADAR_RANGES] = { 1, 2, 5, 10, 20, 50,
+                                                       100 };
+        static UI_BSS struct radarPoint pts[AIS_MAX_SHIPS];
+        int np = 0, sel = -1;
+        for(int i = 0; i < n; i++)
+        {
+            if(!list[i].posValid)
+                continue;
+            struct radarPoint *p = &pts[np];
+            p->lat = list[i].lat / 600000.0f;
+            p->lon = list[i].lon / 600000.0f;
+            if(list[i].cog < 3600 && list[i].sog > 5 && list[i].sog < 1023)
+                p->dir = list[i].cog / 10;
+            else
+                p->dir = -1;
+            switch(list[i].cls)
+            {
+                case AIS_CLASS_A: p->color = radar_green;   break;
+                case AIS_CLASS_B: p->color = radar_cyan;    break;
+                case AIS_ATON:    p->color = radar_magenta; break;
+                default:          p->color = color_white;   break;
+            }
+            if(i == ui_state->ais_sel)
+                sel = np;
+            np++;
+        }
+        float range = _ui_drawRadar(pts, np, sel, ranges, UI_RADAR_RANGES,
+                                    ui_state->radar_range, 1.852f);
+        char name[24];
+        _ui_aisName(name, sizeof(name), s);
+        _ui_radarSide("AIS", range, ui_state->radar_range, "NM",
+                      s->posValid ? ui_state->ais_sel : -1, n, name,
+                      s->lat / 600000.0f, s->lon / 600000.0f, s->tick);
+        return true;
+    }
+    #endif
+
     char ago[8], buf[48];
     _ui_ago(ago, sizeof(ago), s->tick);
     gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "AIS %d/%d",
@@ -3012,6 +3366,16 @@ static bool _ui_drawAisPage(ui_state_t *ui_state)
         _ui_aisCoord(lon, sizeof(lon), s->lon, 'E', 'W');
         pos.y += step;
         gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s %s", lat, lon);
+        #ifdef CONFIG_QTH_GRID
+        char from[40];
+        _ui_qthDistance(from, sizeof(from), s->lat / 600000.0f,
+                        s->lon / 600000.0f, true);
+        if(from[0] != '\0')
+        {
+            pos.y += step;
+            gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", from);
+        }
+        #endif
     }
 
     size_t o = 0;

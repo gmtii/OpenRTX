@@ -76,6 +76,9 @@ enum tetraPage
 /* Points of the spectrum screen */
 #define SPECTRUM_POINTS 80
 
+// Fixed ranges of the AIS and DMR radar, after the automatic one
+#define UI_RADAR_RANGES 7
+
 enum SetRxTx
 {
     SET_RX = 0,
@@ -269,6 +272,12 @@ typedef struct ui_state_t
     // DMR station position page on the VFO screen (*), station shown
     bool dmr_page;
     uint8_t dmr_sel;
+#endif
+#if defined(CONFIG_AIS) || defined(CONFIG_DMR_RX)
+    // Radar view of the AIS or DMR station page (ENTER), and its range (#),
+    // 0 for the smallest one holding every station
+    bool radar;
+    uint8_t radar_range;
 #endif
 #ifdef CONFIG_UI_SAVE_CHANNEL
     // Save VFO screen: # pressed once on a memory, again deletes it
