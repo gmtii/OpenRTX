@@ -975,7 +975,7 @@ static void _ui_ago(char *buf, size_t len, long long tick)
 #include <math.h>
 
 /* Radar of the AIS and DMR station pages, centred on the own QTH */
-#define RADAR_R 52 /* Radius, pixels */
+#define RADAR_R 48 /* Radius, pixels */
 #define RADAR_KM_PER_DEG 111.2f
 
 static const color_t radar_ring = { 120, 100, 20, 255 };
@@ -1175,6 +1175,26 @@ static float _ui_drawRadar(const struct radarPoint *pts, int n, int sel,
 }
 
 /**
+ * One line of the column right of the radar, small, cut to the column's
+ * width: gfx_print() would wrap the rest over the next line.
+ */
+static void _ui_radarText(int16_t y, color_t color, const char *text)
+{
+    const int16_t x = 2 * RADAR_R + 8;
+    const int16_t room = CONFIG_SCREEN_WIDTH - x - 1;
+    char buf[24];
+    size_t len = strlen(text);
+    if(len >= sizeof(buf))
+        len = sizeof(buf) - 1;
+    memcpy(buf, text, len);
+    buf[len] = '\0';
+    while(len > 0 && gfx_getTextWidth(FONT_SIZE_5PT, buf) > room)
+        buf[--len] = '\0';
+    gfx_print((point_t){ x, y }, FONT_SIZE_5PT, TEXT_ALIGN_LEFT, color, "%s",
+              buf);
+}
+
+/**
  * Right of the radar: the range, the picked station's name, distance,
  * bearing and age, and the keys.
  */
@@ -1182,17 +1202,17 @@ static void _ui_radarSide(const char *title, float range, uint8_t rangeIdx,
                           const char *unit, int sel, int n, const char *name,
                           float lat, float lon, long long tick)
 {
-    const fontSize_t font = FONT_SIZE_6PT;
-    const int16_t step = 11;
-    point_t pos = { (int16_t)(2 * RADAR_R + 8), (int16_t)(layout.top_h + 11) };
-    char d[12];
+    char line[24], d[12];
+    int16_t y = layout.top_h + 9;
+    const int16_t step = 9;
 
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "%s", title);
-    pos.y += step;
+    _ui_radarText(y, yellow_fab413, title);
+    y += step;
     _ui_radarDist(d, sizeof(d), range);
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s%s%s",
-              rangeIdx ? "" : "A ", d, unit);
+    sniprintf(line, sizeof(line), "%s%s%s", rangeIdx ? "" : "A ", d, unit);
+    _ui_radarText(y, info_grey, line);
 
+    y += step + 4;
     if(sel >= 0)
     {
         float lat0, lon0, km, brg;
@@ -1202,28 +1222,27 @@ static void _ui_radarSide(const char *title, float range, uint8_t rangeIdx,
         char ago[8];
         _ui_ago(ago, sizeof(ago), tick);
 
-        pos.y += step + 4;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%d/%d", sel + 1,
-                  n);
-        pos.y += step;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "%.8s", name);
-        pos.y += step;
+        sniprintf(line, sizeof(line), "%d/%d", sel + 1, n);
+        _ui_radarText(y, color_white, line);
+        y += step;
+        _ui_radarText(y, yellow_fab413, name);
+        y += step;
         _ui_radarDist(d, sizeof(d), km / unitKm);
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s%s", d, unit);
-        pos.y += step;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%03ld deg",
-                  lroundf(brg) % 360);
-        pos.y += step;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s ago", ago);
+        sniprintf(line, sizeof(line), "%s %s", d, unit);
+        _ui_radarText(y, color_white, line);
+        y += step;
+        sniprintf(line, sizeof(line), "%03ld deg", lroundf(brg) % 360);
+        _ui_radarText(y, color_white, line);
+        y += step;
+        sniprintf(line, sizeof(line), "%s ago", ago);
+        _ui_radarText(y, info_grey, line);
     }
     else
     {
-        pos.y += step + 4;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "No position");
+        _ui_radarText(y, info_grey, "No pos.");
     }
 
-    pos.y = CONFIG_SCREEN_HEIGHT - 3;
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "#=zoom");
+    _ui_radarText(CONFIG_SCREEN_HEIGHT - 3, info_grey, "#=zoom");
 }
 
 /**
