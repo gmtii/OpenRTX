@@ -1269,6 +1269,12 @@ dsp_oversampling_test = executable('dsp_oversampling_test',
                                     sources : unit_test_src + ['tests/unit/dsp_oversampling.cpp'],
                                     kwargs  : unit_test_opts)
 
+# DMR TX check (protocols/DMR): a pure function, no firmware needed
+dmr_tx_check_test = executable('dmr_tx_check_test',
+                               sources : ['openrtx/src/protocols/DMR/dmr_tx_check.c',
+                                          'tests/unit/dmr_tx_check.cpp'],
+                               kwargs  : unit_test_opts)
+
 gfx_text_test = executable('gfx_text_test',
                             sources : unit_test_src + ['tests/unit/gfx_text.cpp'],
                             kwargs  : unit_test_opts)
@@ -1307,4 +1313,5 @@ test('UI Check Standby Test', ui_check_standby_test)
 test('M17 Packet Frame Test', m17_packet_test)
 test('DSP Oversampling Test', dsp_oversampling_test)
 test('GFX Text Test',        gfx_text_test)
+test('DMR TX Check Test',    dmr_tx_check_test)
 test('M17 Baseband Replay Test', m17_replay_test, timeout : 120) # ~40 s in CI with coverage
