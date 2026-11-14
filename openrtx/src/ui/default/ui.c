@@ -1510,6 +1510,13 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
         return true;
     }
 
+    // Cell page: ENTER listens to the cell's uplink, or the downlink again
+    if((ui_state.tetra_page == TETRA_PAGE_CELL) && (msg.keys & KEY_ENTER))
+    {
+        tetraStatus_setUplink(!tetraStatus_uplinkWanted());
+        return true;
+    }
+
     // Neighbours page: # scans the serving cell and the neighbours; ESC
     // stops the scan, then goes back to the cells announced
     if(ui_state.tetra_page == TETRA_PAGE_NEIGHBOURS)

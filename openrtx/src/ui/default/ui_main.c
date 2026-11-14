@@ -36,6 +36,10 @@
     || defined(CONFIG_AIS) || defined(CONFIG_FM_BROADCAST)
 /* Secondary text of the information pages: color_grey is too dark on black */
 static const color_t info_grey = { 160, 160, 160, 255 };
+#ifdef CONFIG_TETRA
+/* The TETRA uplink while it is listened to, or a burst comes in */
+static const color_t uplink_green = { 63, 191, 95, 255 };
+#endif
 #endif
 
 #ifdef CONFIG_TETRA
@@ -77,6 +81,57 @@ static bool _ui_tetraCallShown(const struct tetraStatus *ts)
 }
 
 /**
+ * The last activity heard on the uplink, in one line: "1234567 > G 9001
+ * set-up 3s".
+ */
+static void _ui_tetraUplinkLine(char *buf, size_t len,
+                                const struct tetraStatus *ts)
+{
+    if(ts->ulWhat == TETRA_UL_NONE)
+    {
+        sniprintf(buf, len, "No uplink activity yet");
+        return;
+    }
+
+    long age = (long)((getTick() - ts->ulTime) / 1000);
+    char ago[8], who[12];
+    if(age < 60)
+        sniprintf(ago, sizeof(ago), "%lds", age);
+    else if(age < 3600)
+        sniprintf(ago, sizeof(ago), "%ldm", age / 60);
+    else
+        sniprintf(ago, sizeof(ago), "%ldh", age / 3600);
+    if(ts->ulSrc != 0)
+        sniprintf(who, sizeof(who), "%lu", (unsigned long)ts->ulSrc);
+    else
+        sniprintf(who, sizeof(who), "?");
+
+    switch(ts->ulWhat)
+    {
+        case TETRA_UL_SETUP:
+            if(ts->ulDst != 0)
+                sniprintf(buf, len, "%s > %s%lu set-up %s", who,
+                          ts->ulGroup ? "G " : "", (unsigned long)ts->ulDst,
+                          ago);
+            else
+                sniprintf(buf, len, "%s set-up %s", who, ago);
+            break;
+        case TETRA_UL_TX_DEMAND:
+            sniprintf(buf, len, "%s asks to talk %s", who, ago);
+            break;
+        case TETRA_UL_SDS:
+            sniprintf(buf, len, "%s SDS %s", who, ago);
+            break;
+        case TETRA_UL_VOICE:
+            sniprintf(buf, len, "%s voice %s", who, ago);
+            break;
+        default:
+            sniprintf(buf, len, "%s call control %s", who, ago);
+            break;
+    }
+}
+
+/**
  * TETRA cell or call information, from line 1 to line 4 during a call,
  * on line 2 otherwise.
  */
@@ -84,6 +139,22 @@ static void _ui_drawTetraInfo(void)
 {
     struct tetraStatus ts;
     tetra_getStatus(&ts);
+
+    // On the uplink: its frequency, then the last activity
+    if (ts.uplink) {
+        char line[48];
+        gfx_drawSymbol(layout.line2_pos, layout.line2_symbol_size,
+                       TEXT_ALIGN_LEFT, color_white,
+                       SYMBOL_TRANSMISSION_TOWER);
+        gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
+                  ts.ulPresent ? uplink_green : color_white,
+                  "UL %lu.%04lu", (unsigned long)(ts.ulHz / 1000000),
+                  (unsigned long)((ts.ulHz % 1000000) / 100));
+        _ui_tetraUplinkLine(line, sizeof(line), &ts);
+        gfx_print(layout.line4_pos, layout.line4_font, TEXT_ALIGN_CENTER,
+                  color_white, "%s", line);
+        return;
+    }
 
     if (_ui_tetraCallShown(&ts)) {
         // Talking party
@@ -1273,8 +1344,12 @@ static void _ui_drawTetraCell(void)
         _ui_mhz(dl, sizeof(dl), c.dlHz);
         _ui_mhz(ul, sizeof(ul), c.ulHz);
         pos.y += step;
-        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "DL %s UL %s", dl,
-                  ul);
+        // ENTER listens to the uplink: green meanwhile
+        struct tetraStatus ts;
+        tetra_getStatus(&ts);
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "DL %s", dl);
+        gfx_print(pos, font, TEXT_ALIGN_RIGHT,
+                  ts.uplink ? uplink_green : color_white, "UL %s", ul);
         pos.y += step;
         gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey,
                   "Ch %u B%u%s D%u%s", c.carrier, c.band,
@@ -2298,10 +2373,20 @@ static void _ui_richMeter(int16_t y, color_t accent, bool squelch,
 /**
  * The frequency, large, with its top at y.
  */
+static void _ui_richFreq(int16_t y, freq_t freq, color_t color);
+
 static void _ui_richFrequency(int16_t y)
 {
     freq_t freq = platform_getPttStatus() ? last_state.channel.tx_frequency
                                           : last_state.channel.rx_frequency;
+    _ui_richFreq(y, freq, color_white);
+}
+
+/**
+ * A frequency, large, with its top at y.
+ */
+static void _ui_richFreq(int16_t y, freq_t freq, color_t color)
+{
     char main_str[12];
     char small_str[4];
     sniprintf(main_str, sizeof(main_str), "%lu.%03lu",
@@ -2318,10 +2403,10 @@ static void _ui_richFrequency(int16_t y)
     int16_t x = (CONFIG_SCREEN_WIDTH - (mw + sw + uw)) / 2;
     int16_t base = y + _ui_richCap(FONT_SIZE_16PT) - 1;
 
-    gfx_print((point_t){ x, base }, FONT_SIZE_16PT, TEXT_ALIGN_LEFT,
-              color_white, "%s", main_str);
+    gfx_print((point_t){ x, base }, FONT_SIZE_16PT, TEXT_ALIGN_LEFT, color,
+              "%s", main_str);
     gfx_print((point_t){ (int16_t)(x + mw), base }, FONT_SIZE_10PT,
-              TEXT_ALIGN_LEFT, color_white, "%s", small_str);
+              TEXT_ALIGN_LEFT, color, "%s", small_str);
     if(uw > 0)
         gfx_print((point_t){ (int16_t)(x + mw + sw + 3), base }, FONT_SIZE_6PT,
                   TEXT_ALIGN_LEFT, rich_grey, "MHz");
@@ -2392,10 +2477,15 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
     {
         struct tetraStatus ts;
         tetra_getStatus(&ts);
-        x = ts.sync ? _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "SYNC",
-                                    rich_green, true)
-                    : _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "NO SYNC",
-                                    rich_red, false);
+        // On the uplink: filled while a burst comes in
+        if(ts.uplink)
+            x = _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "UL", rich_teal,
+                              ts.ulPresent);
+        else
+            x = ts.sync ? _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "SYNC",
+                                        rich_green, true)
+                        : _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "NO SYNC",
+                                        rich_red, false);
         // A group filter set
         if(tetraStatus_filter() != 0)
             x = _ui_richBadge(x + 2, 2, 12, FONT_SIZE_6PT, "F", rich_green,
@@ -3007,6 +3097,27 @@ static void _ui_richTetra(void)
     {
         _ui_richPrint(x, y, FONT_SIZE_8PT, TEXT_ALIGN_LEFT, rich_grey,
                       "Searching");
+    }
+
+    // On the uplink: its frequency, green while a burst comes in, what
+    // was decoded and the last activity
+    if(ts.uplink)
+    {
+        char line[48];
+        _ui_richFreq(33, ts.ulHz, ts.ulPresent ? rich_green : color_white);
+        _ui_richPrint(RICH_PAD, 57, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                      "Uplink, %u decoded", ts.ulPdus);
+        _ui_richPrint(RICH_PAD, 57, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
+                      ts.ulPresent ? rich_green : rich_grey, "%s",
+                      ts.ulPresent ? "Burst" : "Quiet");
+        gfx_drawRect((point_t){ RICH_PAD, 68 },
+                     CONFIG_SCREEN_WIDTH - 2 * RICH_PAD, 17, rich_dark, false);
+        _ui_tetraUplinkLine(line, sizeof(line), &ts);
+        _ui_richPrint(RICH_PAD + 3, 72, FONT_SIZE_6PT, TEXT_ALIGN_LEFT,
+                      (ts.ulWhat != TETRA_UL_NONE) ? color_white : rich_grey,
+                      "%s", line);
+        _ui_richMeter(89, rich_teal, false, false);
+        return;
     }
 
     if(_ui_tetraCallShown(&ts))

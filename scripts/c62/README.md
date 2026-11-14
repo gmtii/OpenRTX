@@ -269,7 +269,8 @@ to the main one:
 - **Cell** (6): network, colour code, location area, downlink and uplink,
   carrier, band, offset and duplex, services, air encryption, load,
   system code and sharing, hyperframe and CCK, and the network date and
-  time.
+  time. **ENTER** listens to the cell's uplink (below), and again goes
+  back to the downlink; the uplink frequency is green meanwhile.
 - **Neighbours** (7): the cells the serving one announces, by frequency,
   with their load (`lo`, `med`, `hi`), `S` if synchronised, and their
   network or location area when not the serving cell's. **#** scans them
@@ -292,6 +293,34 @@ to the main one:
   the demodulator expects. Marks off the peaks mean a wrong offset or
   gain: the demodulator then estimates them again at its next
   re-acquisition, within a few seconds.
+
+**Uplink.** What the radios send to the cell: the radio tunes to the
+uplink of the main carrier, from the cell's duplex spacing (10 MHz below
+when the cell gave none). libtetra decodes it while not synchronised to a
+downlink, given the cell heard before for the scrambling: call set-up,
+requests to talk, SDS and status, and speech, which is played if clear.
+The radios' bursts come and go, each with its own timing, so the
+demodulator goes to a burst mode: it chooses each symbol's timing over the
+32 symbols around it, and keeps the clock, gain and offset learned on the
+downlink. On the main screen the top bar shows `UL` (filled while a burst
+comes in) in place of `SYNC`, with the uplink frequency, green during a
+burst, the number of uplink messages decoded, and the last activity
+(`1234567 > G 9001 set-up 3s`, `asks to talk`, `SDS`, `voice`). The
+radios, groups, calls and SDS pages list what the uplink brings too. No
+call following meanwhile. A new frequency, or a site scan, goes back to
+the downlink. Encrypted uplink is shown, not decrypted.
+
+`scripts/c62/tetra_sim/` simulates the receive chain on the PC: real TMO
+uplink bursts from libtetra's TX blocks, modulated, with noise, an IF
+filter and an FM discriminator, through TetraDemod and libtetra. It
+counts what is decoded, in continuous or burst mode:
+
+```bash
+cmake -S OpenRTX/scripts/c62/tetra_sim -B build_sim \
+      -DLIBTETRA=$PWD/modules/lib/libtetra
+cmake --build build_sim
+build_sim/tetra_ul_sim 20 1 1   # SNR dB, seed, burst mode
+```
 
 A firmware built with the baseband dump keeps it working in T mode, to
 capture what the radio receives.
