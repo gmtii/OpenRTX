@@ -12,6 +12,7 @@
 #include "interfaces/delays.h"
 #include "interfaces/platform.h"
 #include "interfaces/radio.h"
+#include "protocols/TETRA/TetraCell.h"
 #include "protocols/TETRA/TetraDemod.h"
 #include "protocols/TETRA/TetraScan.h"
 #include "protocols/TETRA/TetraSpeech.h"
@@ -43,6 +44,8 @@
 #define SCAN_SYNC_MS 2500
 #define SCAN_SYSINFO_MS 1500
 #define SCAN_ERR_BLOCKS 10 /* Phase error blocks wanted before leaving */
+/* Uplink below the downlink when the cell gave no duplex spacing */
+#define UPLINK_SPACING_HZ 10000000
 
 /* Large state: static, there is only one TETRA mode */
 static int16_t baseband[2 * HALF_SAMPLES];
@@ -73,6 +76,10 @@ OpMode_TETRA::OpMode_TETRA()
     , scanErrSum(0)
     , scanErrBlocks(0)
     , scanDeadline(0)
+    , uplink(false)
+    , ulMcc(0)
+    , ulMnc(0)
+    , ulColour(0)
     , basebandPath(-1)
     , basebandId(-1)
 {
@@ -100,6 +107,7 @@ void OpMode_TETRA::reset()
 {
     scanning = false;
     following = false;
+    uplink = false;
     initDemod();
     settleBlocks = SETTLE_BLOCKS;
     resync(false);
@@ -114,6 +122,8 @@ void OpMode_TETRA::reset()
 void OpMode_TETRA::resync(bool overrun)
 {
     initTmo(tetraStatus_onEvent);
+    if (uplink)
+        tetra_tmo_set_uplink_cell(&tmo, ulMcc, ulMnc, ulColour);
     tetraStatus_lostSync(overrun);
 }
 
@@ -229,6 +239,60 @@ void OpMode_TETRA::scanStep(rtxStatus_t *const rtx, const dataBlock_t &block)
         scanNext(rtx);
 }
 
+/*
+ * Uplink: what the radios send to the cell, on the uplink frequency of its
+ * main carrier. libtetra decodes it while not synchronised to a downlink,
+ * each burst aligned on its own training sequence, given the cell for the
+ * scrambling. The radios' bursts come and go, each with its own timing:
+ * the demodulator goes to burst mode, holding what it learned on the
+ * downlink (clock, gain, offset, equalizer).
+ */
+void OpMode_TETRA::uplinkBegin(rtxStatus_t *const rtx)
+{
+    struct tetraCellInfo c;
+    tetraCell_get(&c);
+    if (!c.valid) {
+        /* No cell heard: nothing to descramble with */
+        tetraStatus_setUplink(false);
+        return;
+    }
+
+    /* The cell's duplex spacing, else the usual 10 MHz below */
+    int32_t spacing = UPLINK_SPACING_HZ;
+    if (c.sysinfo && c.dlHz != 0 && c.ulHz != 0)
+        spacing = (int32_t)(c.dlHz - c.ulHz);
+    const uint32_t ulHz = (uint32_t)((int32_t)rtx->rxFrequency - spacing);
+
+    ulMcc = c.mcc;
+    ulMnc = c.mnc;
+    ulColour = c.colourCode;
+    uplink = true;
+    following = false;
+    tetraStatus_uplinkActive(true, ulHz);
+
+    radio_retuneRx(ulHz);
+    tunedHz = ulHz;
+    tetraDemod_setHold(&demod, true);
+    tetraDemod_setBurst(&demod, true);
+    tetra_tmo_resync(&tmo);
+    tetra_tmo_set_uplink_cell(&tmo, ulMcc, ulMnc, ulColour);
+    settleBlocks = SETTLE_BLOCKS;
+}
+
+void OpMode_TETRA::uplinkEnd(rtxStatus_t *const rtx)
+{
+    uplink = false;
+    radio_retuneRx(rtx->rxFrequency);
+    tunedHz = rtx->rxFrequency;
+    tetraDemod_setBurst(&demod, false);
+    tetraDemod_setHold(&demod, false);
+    demodJumps = tetraDemod_reacquisitions(&demod);
+    reacqCount = 0;
+    tetra_tmo_resync(&tmo);
+    tetraStatus_uplinkActive(false, 0);
+    settleBlocks = SETTLE_BLOCKS;
+}
+
 void OpMode_TETRA::enable()
 {
     reset();
@@ -326,13 +390,25 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
     }
     dataErrors = 0;
 
-    /* Site discovery, in place of normal reception */
-    if (!scanning && tetraScan_running())
+    /* Site discovery, in place of normal reception: from the downlink */
+    if (!scanning && tetraScan_running()) {
+        if (uplink) {
+            tetraStatus_setUplink(false);
+            uplinkEnd(rtx);
+        }
         scanBegin(rtx);
+    }
     if (scanning) {
         scanStep(rtx, block);
         return;
     }
+
+    /* The uplink asked for, or the downlink back */
+    const bool wantUplink = tetraStatus_uplinkWanted();
+    if (wantUplink && !uplink)
+        uplinkBegin(rtx);
+    else if (!wantUplink && uplink)
+        uplinkEnd(rtx);
 
     if (settleBlocks > 0) {
         settleBlocks--;
@@ -340,6 +416,19 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
     }
 
     size_t n = tetraDemod_process(&demod, block.data, block.len, soft);
+
+    /* On the uplink: no slot grid to keep, no call to follow */
+    if (uplink) {
+        tetra_tmo_push_soft(&tmo, soft, n);
+        const bool present = tetraDemod_present(&demod);
+        tetraStatus_setDemod(tetraDemod_phaseError(&demod),
+                             tetraDemod_carrierOffset(&demod), present);
+        if (present)
+            platform_ledOn(GREEN);
+        else
+            platform_ledOff(GREEN);
+        return;
+    }
 
     /*
      * The demodulator re-acquired or followed a timing jump. Both move the
@@ -390,7 +479,7 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
     }
 
     tetraStatus_setDemod(tetraDemod_phaseError(&demod),
-                         tetraDemod_carrierOffset(&demod));
+                         tetraDemod_carrierOffset(&demod), false);
 
     if (tetraStatus_sync())
         platform_ledOn(GREEN);

@@ -353,9 +353,73 @@ static void onCall(const struct tetra_call *c)
     lastCall = getTick();
 }
 
+/* Under statusMutex */
+static void ulNote(uint32_t src, uint32_t dst, bool group, uint8_t what)
+{
+    if (src != 0)
+        status.ulSrc = src;
+    status.ulDst = dst;
+    status.ulGroup = group;
+    status.ulWhat = what;
+    status.ulTime = getTick();
+    if (status.ulPdus < UINT16_MAX)
+        status.ulPdus++;
+}
+
+/*
+ * An event decoded from the uplink: what a radio sends to the cell. The
+ * calls on the downlink are tracked by their identifier and timeslots,
+ * which the uplink does not always carry: its calls go to the lists of
+ * radios, groups and calls heard and to the uplink line, not to the call
+ * card. Its clear speech is played as it comes.
+ */
+static void onUplink(const struct tetra_event *ev)
+{
+    if (ev->type == TETRA_EV_TRAFFIC)
+        tetraSpeech_traffic(&ev->u.traffic, ev->u.traffic.encrypted
+                                                ? TETRA_TRAFFIC_ENCRYPTED
+                                                : TETRA_TRAFFIC_CLEAR);
+
+    pthread_mutex_lock(&statusMutex);
+    switch (ev->type) {
+        case TETRA_EV_CALL: {
+            const struct tetra_call *c = &ev->u.call;
+            uint8_t what = TETRA_UL_CALL;
+            if (c->what == TETRA_CALL_SETUP)
+                what = TETRA_UL_SETUP;
+            else if (c->what == TETRA_CALL_TX_DEMAND)
+                what = TETRA_UL_TX_DEMAND;
+            tetraHeard_call(c);
+            ulNote(c->src_ssi, c->dst_ssi, c->group, what);
+            break;
+        }
+
+        case TETRA_EV_SDS:
+            onSds(&ev->u.sds);
+            ulNote(ev->u.sds.src_ssi, ev->u.sds.dst_ssi, false, TETRA_UL_SDS);
+            break;
+
+        case TETRA_EV_TRAFFIC:
+            /* One note per second of speech is enough */
+            if (status.ulWhat != TETRA_UL_VOICE
+                || getTick() - status.ulTime > 1000)
+                ulNote(ev->u.traffic.talker_ssi, 0, false, TETRA_UL_VOICE);
+            break;
+
+        default:
+            break;
+    }
+    pthread_mutex_unlock(&statusMutex);
+}
+
 void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
 {
     (void)user;
+
+    if (ev->uplink) {
+        onUplink(ev);
+        return;
+    }
 
     /* Speech first, outside the status lock */
     enum tetraTrafficCall call = TETRA_TRAFFIC_UNKNOWN;
@@ -498,11 +562,40 @@ void tetraStatus_demodRestart(void)
     pthread_mutex_unlock(&statusMutex);
 }
 
-void tetraStatus_setDemod(unsigned phaseErr, int carrierHz)
+void tetraStatus_setDemod(unsigned phaseErr, int carrierHz, bool present)
 {
     pthread_mutex_lock(&statusMutex);
     status.phaseErr = phaseErr;
     status.carrierHz = carrierHz;
+    status.ulPresent = present;
+    pthread_mutex_unlock(&statusMutex);
+}
+
+void tetraStatus_setUplink(bool on)
+{
+    pthread_mutex_lock(&statusMutex);
+    status.uplinkWanted = on;
+    pthread_mutex_unlock(&statusMutex);
+}
+
+bool tetraStatus_uplinkWanted(void)
+{
+    pthread_mutex_lock(&statusMutex);
+    bool on = status.uplinkWanted;
+    pthread_mutex_unlock(&statusMutex);
+    return on;
+}
+
+void tetraStatus_uplinkActive(bool on, uint32_t hz)
+{
+    pthread_mutex_lock(&statusMutex);
+    if (on) {
+        stopFollow("uplink");
+        status.call = false;
+    }
+    status.uplink = on;
+    status.ulHz = on ? hz : 0;
+    status.ulPresent = false;
     pthread_mutex_unlock(&statusMutex);
 }
 

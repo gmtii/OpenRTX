@@ -180,7 +180,9 @@ void tetraHeard_call(const struct tetra_call *c)
     pthread_mutex_unlock(&heardMutex);
 
     bool setup = (c->what == TETRA_CALL_SETUP);
-    bool grant = (c->what == TETRA_CALL_TX_GRANTED);
+    /* On the uplink a radio asks for the floor: it talks next */
+    bool grant = (c->what == TETRA_CALL_TX_GRANTED)
+              || (c->what == TETRA_CALL_TX_DEMAND);
     if (!setup && !grant && c->what != TETRA_CALL_INFO)
         return;
 

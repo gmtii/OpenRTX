@@ -55,6 +55,8 @@ private:
     void scanNext(rtxStatus_t *const rtx);
     void scanEnd(rtxStatus_t *const rtx);
     void scanStep(rtxStatus_t *const rtx, const dataBlock_t &block);
+    void uplinkBegin(rtxStatus_t *const rtx);
+    void uplinkEnd(rtxStatus_t *const rtx);
     void startSampling();
     void stopSampling();
 
@@ -75,6 +77,10 @@ private:
     uint32_t scanErrSum;       // Phase error readings while in sync
     unsigned scanErrBlocks;    // Number of them
     long long scanDeadline;    // End of the wait for sync or sysinfo
+    bool uplink;               // On the uplink of the cell
+    uint16_t ulMcc;            // Its cell, for the uplink scrambling
+    uint16_t ulMnc;
+    uint8_t ulColour;
     pathId basebandPath;
     streamId basebandId;
 };

@@ -58,6 +58,27 @@ struct tetraStatus {
 
     uint16_t followCarrier; /**< Carrier of the call followed, if followHz */
     uint32_t followHz;      /**< Frequency listened to there, 0 if none */
+
+    bool uplinkWanted;   /**< The UI asked for the uplink */
+    bool uplink;         /**< Listening to the uplink of the cell */
+    bool ulPresent;      /**< An uplink burst is being received */
+    uint32_t ulHz;       /**< The uplink frequency, if uplink */
+    uint16_t ulPdus;     /**< Uplink signalling and voice decoded */
+    uint32_t ulSrc;      /**< Radio of the last uplink activity, 0 none */
+    uint32_t ulDst;      /**< Party it called, 0 if none or unknown */
+    bool ulGroup;        /**< ulDst is a group */
+    uint8_t ulWhat;      /**< enum tetraUplinkWhat */
+    long long ulTime;    /**< Tick of the last uplink activity */
+};
+
+/** Last activity heard on the uplink */
+enum tetraUplinkWhat {
+    TETRA_UL_NONE = 0,
+    TETRA_UL_SETUP,     /**< Call set-up */
+    TETRA_UL_TX_DEMAND, /**< Asks to talk */
+    TETRA_UL_CALL,      /**< Other call control */
+    TETRA_UL_SDS,       /**< SDS or status */
+    TETRA_UL_VOICE,     /**< Speech */
 };
 
 /**
@@ -113,8 +134,31 @@ void tetraStatus_demodRestart(void);
 
 /**
  * Update the demodulator figures.
+ *
+ * @param present: on the uplink, a burst is being received.
  */
-void tetraStatus_setDemod(unsigned phaseErr, int carrierHz);
+void tetraStatus_setDemod(unsigned phaseErr, int carrierHz, bool present);
+
+/**
+ * Ask for the uplink of the cell, or the downlink back. From the UI; the
+ * TETRA mode does it, if a cell was heard. A new frequency gives the
+ * downlink back.
+ */
+void tetraStatus_setUplink(bool on);
+
+/**
+ * @return true if the UI asks for the uplink. For the TETRA mode.
+ */
+bool tetraStatus_uplinkWanted(void);
+
+/**
+ * The TETRA mode is on the uplink, or back on the downlink. The uplink
+ * stops any call following.
+ *
+ * @param on: true on the uplink.
+ * @param hz: the uplink frequency.
+ */
+void tetraStatus_uplinkActive(bool on, uint32_t hz);
 
 /**
  * @return true while locked to a TMO downlink.

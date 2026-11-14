@@ -63,8 +63,8 @@ set(C62_BASEBAND_DUMP_FORMAT 1 CACHE STRING
 option(C62_BASEBAND_DUMP_BURST
        "Fill 1 MiB of PSRAM, send it, repeat (gapless at any baud rate)" ON)
 option(C62_REG43_SWEEP "Cycle REG_43 test values in M17 RX" OFF)
-# C62_TETRA: TETRA TMO downlink receive mode ("T" under key 5), decoded with
-#   libtetra, which west fetches to modules/lib/libtetra.
+# C62_TETRA: TETRA TMO receive mode ("T" under key 5), downlink and uplink,
+#   decoded with libtetra, which west fetches to modules/lib/libtetra.
 option(C62_TETRA "TETRA receive mode" ON)
 # C62_TETRA_IF_DC_FILTER: keep the BK4819 RX IF DC filter on in T mode (the
 #   flat audio mode bypasses it). OFF to compare.
@@ -126,10 +126,9 @@ if(C62_TETRA)
                         "-DC62_TETRA=OFF")
   endif()
   # Receive only, in the clear: the TEA and identity decryption code is not
-  # built. TMO uplink bursts are recognised, not decoded, as before the
-  # uplink decoder came to libtetra.
+  # built. The TMO uplink decoder is, for listening to a cell's uplink.
   set(TETRA_ENABLE_CRYPTO OFF)
-  set(TETRA_UPLINK_DECODE OFF)
+  set(TETRA_UPLINK_DECODE ON)
   add_subdirectory(${C62_LIBTETRA} ${CMAKE_BINARY_DIR}/libtetra)
   # Build it with the Zephyr compiler flags (CPU, FPU, ABI). Copied, not
   # linked: libtetra exports its target for install, and zephyr_interface
