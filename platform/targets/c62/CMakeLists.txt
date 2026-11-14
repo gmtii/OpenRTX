@@ -98,6 +98,10 @@ option(C62_SPECTRUM "Spectrum view" ON)
 # C62_RICH_UI: main screen with a mode badge, the receiver state, call
 #   cards and a segmented S-meter (CONFIG_UI_RICH_MAIN).
 option(C62_RICH_UI "Rich main screen" ON)
+# C62_QTH_GRID: own Maidenhead locator (6 characters), the centre of the AIS
+#   and DMR position radar and the origin of the distances shown; empty for
+#   no radar.
+set(C62_QTH_GRID "IL18ul" CACHE STRING "Own Maidenhead locator")
 
 if(C62_WIDE_RX)
   target_compile_definitions(app PRIVATE C62_WIDE_RX)
@@ -265,6 +269,10 @@ endif()
 target_compile_definitions(app PRIVATE CONFIG_UI_SAVE_CHANNEL
                                        CONFIG_UI_FLASHLIGHT)
 
+if(NOT C62_QTH_GRID STREQUAL "")
+  target_compile_definitions(app PRIVATE CONFIG_QTH_GRID="${C62_QTH_GRID}")
+endif()
+
 if(C62_RICH_UI)
   # Also the frequency step on macro keys 7 and 8, in place of the
   # brightness, which the settings menu still sets
@@ -275,6 +283,7 @@ endif()
 message(STATUS "C62: wide RX ${C62_WIDE_RX}, TETRA ${C62_TETRA} "
                "(speech ${C62_TETRA_SPEECH}), DMR ${c62_dmr_status}, "
                "AM ${C62_AM}, ACARS ${C62_ACARS}, AIS ${C62_AIS}, FM radio ${C62_FM_BROADCAST}, spectrum ${C62_SPECTRUM}, rich UI ${C62_RICH_UI}, "
+               "QTH ${C62_QTH_GRID}, "
                "REG_43 sweep ${C62_REG43_SWEEP}, "
                "baseband dump ${C62_BASEBAND_DUMP} "
                "(${C62_BASEBAND_DUMP_BAUD} baud, format "

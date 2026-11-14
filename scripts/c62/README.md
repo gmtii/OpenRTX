@@ -58,6 +58,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
 | `C62_ACARS` | `ON` | ACARS receive mode "ACARS" (section 13) |
 | `C62_AIS` | `ON` | AIS receive mode "AIS" (section 14) |
+| `C62_QTH_GRID` | `IL18ul` | Own Maidenhead locator: centre of the DMR and AIS radar and origin of the distances (sections 6 and 14); empty for none |
 | `C62_FM_BROADCAST` | `ON` | Broadcast FM radio on the BK1080, MONI + # (section 15) |
 | `C62_SPECTRUM` | `ON` | Spectrum view, MONI + 0 on the VFO screen (section 9) |
 | `C62_RICH_UI` | `ON` | Main screen with a mode badge, the receiver state (RX, TX, SYNC, LOCK), call cards and a segmented S-meter, also in the macro menu (squelch level and threshold in FM and AM); macro keys 7 and 8 set the frequency step instead of the brightness. `OFF` keeps the default OpenRTX screen and macro menu |
@@ -359,11 +360,23 @@ some radios put in the voice. Each radio's latest LRRP fix is kept, up to
   IL18qd 3m`, the alias in place of the ID when one was heard), and a
   talker's locator after the slot during a call (`TS1 IL18qd`).
 - **\*** opens the station page: alias and ID, Maidenhead locator,
-  latitude and longitude, speed and heading when sent, number of reports
-  and age. **UP**/**DOWN** go through the radios, latest fix first;
+  latitude and longitude, distance and bearing from the own QTH, speed and
+  heading when sent, number of reports and age. **UP**/**DOWN** go through
+  the radios, latest fix first; **ENTER** shows them on the radar (below);
   **\*** or **ESC** close it.
 
 The reports are printed on the console too.
+
+**Radar.** On the DMR and AIS station pages, **ENTER** shows the stations
+on a radar centred on the own QTH, the Maidenhead locator `C62_QTH_GRID`
+(`IL18ul` by default; empty for no radar), north up, with rings at the
+range and half of it. A station moving is a triangle pointing along its
+course, else a diamond; one beyond the range is a tick on the outer ring
+at its bearing. The station picked with **UP**/**DOWN** is yellow and
+circled, and its name, distance, bearing and age show on the right.
+**#** steps the range: automatic (`A`, the smallest holding every
+station), then 2 to 200 km for DMR, 1 to 100 NM for AIS. **ENTER** goes
+back to the station, **\*** or **ESC** close the page.
 
 **Voice.** DMR speech is AMBE+2, decoded with
 [mbelib](https://github.com/lwvmobile/mbelib) (ISC licence). The AMBE+2
@@ -541,8 +554,10 @@ and age, then its position, speed, course, navigational status and
 destination scrolling. The green LED flashes for each report and the
 screen wakes. **\*** opens the station page: one station whole (MMSI,
 call sign, position, SOG / COG / heading, status and type, destination,
-dimensions and draught, reports), **UP/DOWN** go through them, newest
-first, **\*** or **ESC** close it.
+dimensions and draught, reports, and the distance and bearing from the
+own QTH), **UP/DOWN** go through them, newest first, **ENTER** shows them
+on the radar (section 6: class A green, class B cyan, aids to navigation
+magenta, others white, ranges in NM), **\*** or **ESC** close it.
 
 The receiver takes the centre and amplitude of the signal from its
 highest and lowest levels over the last 13 bits, so a carrier offset or a
