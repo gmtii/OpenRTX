@@ -474,23 +474,30 @@ defaults.
 
 ## 11. Channel memories
 
-**P2** on the VFO screen saves the VFO in a memory: a list of the
-memories opens, with a new one at the end, picked by default.
+The 128 memories keep their place, M001 to M128, shown by pages of a
+screen (6 memories): page 0 holds M001-M006, page 1 M007-M012 and so on.
+The page is on the top bar, after the title (`Save VFO 2`); an empty
+place is listed as `M009 -` in grey.
+
+**P2** on the VFO screen saves the VFO in a memory: the pages open on the
+first empty place.
 
 | Key | Action |
 |---|---|
-| **UP** / **DOWN** | Pick a memory to overwrite, or the new one |
+| **0**-**9** | Go to that page, on its first empty place |
+| **UP** / **DOWN** | Pick a place, empty or a memory to overwrite |
 | **ENTER** | Save the VFO there, named after its mode and frequency (`T 390.2125`, `AIS 161.9750`) |
-| **#** twice | Delete the memory picked: the next ones move up |
+| **#** twice | Delete the memory picked: its place is left empty |
 | **ESC** / **P2** | Back to the VFO |
 
 **P1** on the VFO or memory screen opens the list of memories, the one in
 use picked: **UP** / **DOWN** go through it, **ENTER** loads the memory
 picked, **ESC** or **P1** go back. With voice prompts on, holding P1
-still announces the channel summary.
+still announces the channel summary. **0**-**9** go to the first memory
+of that page; UP and DOWN skip the empty places.
 
-The red key (ESC) on the VFO screen switches to the memories, UP and DOWN
-go through them, and the menu's Channels list them too. A memory holds the
+The red key (ESC) on the VFO screen switches to the memories (the one last
+used, or the nearest if it was deleted), UP and DOWN go through them, and the menu's Channels list them too. A memory holds the
 whole channel: mode, RX and TX frequencies, power, bandwidth and tones.
 Memories saved before every mode had its label (ACARS and AIS ones, named
 ` 131.5500`) are listed with the mode they hold in front.

@@ -121,6 +121,7 @@ extern bool _ui_drawMacroMenu(ui_state_t* ui_state);
 #ifdef CONFIG_UI_SAVE_CHANNEL
 extern void _ui_drawChannelSave(ui_state_t* ui_state);
 extern const char *_ui_modeLabel(uint8_t mode);
+extern uint8_t _ui_menuRows(void);
 #endif
 #ifdef CONFIG_SPECTRUM
 extern void _ui_drawSpectrum(ui_state_t* ui_state);
@@ -1228,19 +1229,59 @@ static void _ui_fsm_fmRadio(kbd_msg_t msg)
 #endif
 
 #ifdef CONFIG_UI_SAVE_CHANNEL
-/* Memories the CPS can hold */
-#define SAVE_MAX_CHANNELS 128
-
 /**
- * Number of memories: they are contiguous from the first.
+ * Whether a memory slot holds a memory: they keep their slot, so there can
+ * be empty ones between them.
  */
-static uint16_t _ui_countChannels()
+static bool _ui_memoryUsed(int16_t index)
 {
     channel_t channel;
-    uint16_t n = 0;
-    while((n < SAVE_MAX_CHANNELS) && (cps_readChannel(&channel, n) != -1))
-        n++;
-    return n;
+    return (index >= 0) && (index < SAVE_MAX_CHANNELS)
+           && (cps_readChannel(&channel, index) != -1);
+}
+
+/**
+ * The memory next to a slot, going up (dir 1) or down (-1), past the
+ * empty ones.
+ *
+ * @return its slot, -1 if there is none that way.
+ */
+static int16_t _ui_nextMemory(int16_t from, int8_t dir)
+{
+    for(int16_t i = from + dir; (i >= 0) && (i < SAVE_MAX_CHANNELS);
+        i += dir)
+    {
+        if(_ui_memoryUsed(i))
+            return i;
+    }
+    return -1;
+}
+
+/**
+ * The memory at a slot or, if it is empty, the nearest one after it, else
+ * before it.
+ *
+ * @return its slot, -1 if there are no memories.
+ */
+static int16_t _ui_nearestMemory(int16_t index)
+{
+    if(_ui_memoryUsed(index))
+        return index;
+    int16_t next = _ui_nextMemory(index, 1);
+    return (next >= 0) ? next : _ui_nextMemory(index, -1);
+}
+
+/**
+ * The first empty memory slot, the last one if all are taken.
+ */
+static uint16_t _ui_firstFreeMemory(void)
+{
+    for(uint16_t i = 0; i < SAVE_MAX_CHANNELS; i++)
+    {
+        if(!_ui_memoryUsed(i))
+            return i;
+    }
+    return SAVE_MAX_CHANNELS - 1;
 }
 
 /**
@@ -1249,11 +1290,13 @@ static uint16_t _ui_countChannels()
  */
 static void _ui_openMemories(void)
 {
-    uint16_t sel = 0;
-    if((state.ui_screen == MAIN_MEM) && !state.bank_enabled
-       && (state.channel_index >= 0)
-       && (state.channel_index < _ui_countChannels()))
-        sel = state.channel_index;
+    int16_t sel = -1;
+    if((state.ui_screen == MAIN_MEM) && !state.bank_enabled)
+        sel = _ui_nearestMemory(state.channel_index);
+    if(sel < 0)
+        sel = _ui_nearestMemory(0);
+    if(sel < 0)
+        sel = 0;
     ui_state.last_main_state = state.ui_screen;
     ui_state.menu_selected = sel;
     ui_state.memories_quick = true;
@@ -1261,17 +1304,36 @@ static void _ui_openMemories(void)
 }
 
 /**
- * Save VFO screen: UP/DOWN pick a memory or a new one, ENTER saves the VFO
- * there, # twice deletes the memory, ESC or P2 go back.
+ * Save VFO screen: UP/DOWN pick a slot, empty or not, 0-9 go to that page,
+ * ENTER saves the VFO there, # twice deletes the memory, ESC or P2 go back.
  */
 static void _ui_fsm_channelSave(kbd_msg_t msg)
 {
-    uint16_t count = _ui_countChannels();
     bool arm = false;
 
     if((msg.keys & KEY_ESC) || (msg.keys & KEY_F2))
     {
         state.ui_screen = MAIN_VFO;
+    }
+    else if(input_isNumberPressed(msg))
+    {
+        // The page's first empty slot, else its first one
+        uint16_t first = input_getPressedNumber(msg) * _ui_menuRows();
+        if(first < SAVE_MAX_CHANNELS)
+        {
+            uint16_t last = first + _ui_menuRows();
+            if(last > SAVE_MAX_CHANNELS)
+                last = SAVE_MAX_CHANNELS;
+            ui_state.menu_selected = first;
+            for(uint16_t i = first; i < last; i++)
+            {
+                if(!_ui_memoryUsed(i))
+                {
+                    ui_state.menu_selected = i;
+                    break;
+                }
+            }
+        }
     }
     else if(msg.keys & (KEY_UP | KNOB_LEFT))
     {
@@ -1280,8 +1342,7 @@ static void _ui_fsm_channelSave(kbd_msg_t msg)
     }
     else if(msg.keys & (KEY_DOWN | KNOB_RIGHT))
     {
-        if((ui_state.menu_selected < count)
-           && (ui_state.menu_selected + 1 < SAVE_MAX_CHANNELS))
+        if(ui_state.menu_selected + 1 < SAVE_MAX_CHANNELS)
             ui_state.menu_selected++;
     }
     else if(msg.keys & KEY_ENTER)
@@ -1294,10 +1355,7 @@ static void _ui_fsm_channelSave(kbd_msg_t msg)
                   (unsigned long)(channel.rx_frequency / 1000000),
                   (unsigned long)((channel.rx_frequency % 1000000) / 100));
 
-        uint16_t pos = ui_state.menu_selected;
-        if(pos > count)
-            pos = count;
-        if(cps_writeChannel(channel, pos) == 0)
+        if(cps_writeChannel(channel, ui_state.menu_selected) == 0)
         {
             vp_beep(BEEP_FUNCTION_LATCH_ON, LONG_BEEP);
             state.ui_screen = MAIN_VFO;
@@ -1305,7 +1363,7 @@ static void _ui_fsm_channelSave(kbd_msg_t msg)
     }
     else if(msg.keys & KEY_HASH)
     {
-        if(ui_state.menu_selected < count)
+        if(_ui_memoryUsed(ui_state.menu_selected))
         {
             if(ui_state.save_delete_armed)
             {
@@ -2396,7 +2454,15 @@ void ui_updateFSM(bool *sync_rtx)
                     {
                         // Save VFO channel
                         state.vfo_channel = state.channel;
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                        // The memory last used, or the nearest one if its
+                        // slot was emptied
+                        int16_t mem = _ui_nearestMemory(state.channel_index);
+                        int result = (mem >= 0)
+                                   ? _ui_fsm_loadChannel(mem, sync_rtx) : -1;
+#else
                         int result = _ui_fsm_loadChannel(state.channel_index, sync_rtx);
+#endif
                         // Read successful and channel is valid
                         if(result != -1)
                         {
@@ -2486,10 +2552,9 @@ void ui_updateFSM(bool *sync_rtx)
 #ifdef CONFIG_UI_SAVE_CHANNEL
                     else if(msg.keys & KEY_F2)
                     {
-                        // Save the VFO in a memory, a new one by default
-                        ui_state.menu_selected = _ui_countChannels();
-                        if(ui_state.menu_selected >= SAVE_MAX_CHANNELS)
-                            ui_state.menu_selected = SAVE_MAX_CHANNELS - 1;
+                        // Save the VFO in a memory, the first empty slot
+                        // by default
+                        ui_state.menu_selected = _ui_firstFreeMemory();
                         ui_state.save_delete_armed = false;
                         state.ui_screen = CHANNEL_SAVE;
                     }
@@ -2725,14 +2790,27 @@ void ui_updateFSM(bool *sync_rtx)
                     }
                     else if(msg.keys & KEY_UP || msg.keys & KNOB_RIGHT)
                     {
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                        // The next memory, past the empty slots
+                        int16_t next = _ui_nextMemory(state.channel_index, 1);
+                        if(next >= 0)
+                            _ui_fsm_loadChannel(next, sync_rtx);
+#else
                         _ui_fsm_loadChannel(state.channel_index + 1, sync_rtx);
+#endif
                         vp_announceChannelName(&state.channel,
                                                state.channel_index+1,
                                                queueFlags);
                     }
                     else if(msg.keys & KEY_DOWN || msg.keys & KNOB_LEFT)
                     {
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                        int16_t prev = _ui_nextMemory(state.channel_index, -1);
+                        if(prev >= 0)
+                            _ui_fsm_loadChannel(prev, sync_rtx);
+#else
                         _ui_fsm_loadChannel(state.channel_index - 1, sync_rtx);
+#endif
                         vp_announceChannelName(&state.channel,
                                                state.channel_index+1,
                                                queueFlags);
@@ -2788,6 +2866,29 @@ void ui_updateFSM(bool *sync_rtx)
             case MENU_CHANNEL:
             // Contacts menu screen
             case MENU_CONTACTS:
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                // Memory list: a number goes to the first memory of that
+                // page, if it has any; UP/DOWN skip the empty slots
+                if((state.ui_screen == MENU_CHANNEL)
+                   && input_isNumberPressed(msg))
+                {
+                    int16_t first = input_getPressedNumber(msg)
+                                  * _ui_menuRows();
+                    int16_t sel = _ui_nextMemory(first - 1, 1);
+                    if((sel >= 0) && (sel < first + _ui_menuRows()))
+                        ui_state.menu_selected = sel;
+                }
+                else if((state.ui_screen == MENU_CHANNEL)
+                        && (msg.keys & (KEY_UP | KNOB_LEFT
+                                        | KEY_DOWN | KNOB_RIGHT)))
+                {
+                    int8_t dir = (msg.keys & (KEY_UP | KNOB_LEFT)) ? -1 : 1;
+                    int16_t sel = _ui_nextMemory(ui_state.menu_selected, dir);
+                    if(sel >= 0)
+                        ui_state.menu_selected = sel;
+                }
+                else
+#endif
                 if(msg.keys & KEY_UP || msg.keys & KNOB_LEFT)
                     // Using 1 as parameter disables menu wrap around
                     _ui_menuUp(1);

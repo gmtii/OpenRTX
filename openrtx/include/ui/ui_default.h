@@ -24,6 +24,10 @@
 #define TIMEDATE_DIGITS 10
 // Max number of UI events
 #define MAX_NUM_EVENTS 16
+#ifdef CONFIG_UI_SAVE_CHANNEL
+// Memory slots the CPS can hold, each in its place
+#define SAVE_MAX_CHANNELS 128
+#endif
 
 enum uiScreen
 {

@@ -682,47 +682,89 @@ void _ui_drawMenuBank(ui_state_t* ui_state)
 
 #ifdef CONFIG_UI_SAVE_CHANNEL
 /**
- * Save VFO screen entries: the memories, then a new one at the end.
+ * Number of menu entries that fit in the screen height: a page of the
+ * memory lists.
  */
-static int _ui_getSaveSlotName(char *buf, uint8_t max_len, uint8_t index)
+uint8_t _ui_menuRows(void)
 {
-    channel_t channel;
-    if(cps_readChannel(&channel, index) != -1)
+    return (CONFIG_SCREEN_HEIGHT - 1 - layout.line1_pos.y) / layout.menu_h
+           + 1;
+}
+
+/**
+ * The page of memory slots holding the one picked, a screen of them, its
+ * number on the top bar after the title (none without one): each slot
+ * with its number, the empty ones as "-" in grey.
+ */
+static void _ui_drawMemoryPage(uint8_t selected, const char *title,
+                               color_t title_color)
+{
+    uint8_t rows = _ui_menuRows();
+    uint8_t page = selected / rows;
+    if(title != NULL)
+        gfx_print(layout.top_pos, layout.top_font, TEXT_ALIGN_CENTER,
+                  title_color, "%s %u", title, page);
+
+    point_t pos = layout.line1_pos;
+    for(uint8_t i = 0; i < rows; i++)
     {
+        uint16_t index = page * rows + i;
+        if(index >= SAVE_MAX_CHANNELS)
+            break;
+        char entry_buf[MAX_ENTRY_LEN];
         char name[40];
-        _ui_memoryName(name, sizeof(name), &channel);
-        sniprintf(buf, max_len, "M%03u %s", index + 1, name);
-        return 0;
+        channel_t channel;
+        bool used = (cps_readChannel(&channel, index) != -1);
+        if(used)
+            _ui_memoryName(name, sizeof(name), &channel);
+        else
+            sniprintf(name, sizeof(name), "-");
+        sniprintf(entry_buf, sizeof(entry_buf), "M%03u %s", index + 1, name);
+
+        color_t text_color = used ? color_white : color_grey;
+        if(index == selected)
+        {
+            text_color = color_black;
+            point_t rect_pos = {0, pos.y - layout.menu_h + 3};
+            gfx_drawRect(rect_pos, CONFIG_SCREEN_WIDTH, layout.menu_h,
+                         color_white, true);
+            announceMenuItemIfNeeded(entry_buf, NULL, false);
+        }
+        gfx_print(pos, layout.menu_font, TEXT_ALIGN_LEFT, text_color,
+                  entry_buf);
+        pos.y += layout.menu_h;
     }
-    if((index == 0) || (cps_readChannel(&channel, index - 1) != -1))
-    {
-        sniprintf(buf, max_len, "M%03u + New", index + 1);
-        return 0;
-    }
-    return -1;
 }
 
 void _ui_drawChannelSave(ui_state_t* ui_state)
 {
     gfx_clearScreen();
     if(ui_state->save_delete_armed)
+    {
         gfx_print(layout.top_pos, layout.top_font, TEXT_ALIGN_CENTER,
                   yellow_fab413, "# again: delete");
+        _ui_drawMemoryPage(ui_state->menu_selected, NULL, color_white);
+    }
     else
-        gfx_print(layout.top_pos, layout.top_font, TEXT_ALIGN_CENTER,
-                  color_white, "Save VFO");
-    _ui_drawMenuList(ui_state->menu_selected, _ui_getSaveSlotName);
+        _ui_drawMemoryPage(ui_state->menu_selected, "Save VFO",
+                           color_white);
 }
 #endif
 
 void _ui_drawMenuChannel(ui_state_t* ui_state)
 {
     gfx_clearScreen();
+#ifdef CONFIG_UI_SAVE_CHANNEL
+    // The memories by pages, picked with the numbers
+    _ui_drawMemoryPage(ui_state->menu_selected, currentLanguage->channels,
+                       color_white);
+#else
     // Print "Channel" on top bar
     gfx_print(layout.top_pos, layout.top_font, TEXT_ALIGN_CENTER,
               color_white, currentLanguage->channels);
     // Print channel entries
     _ui_drawMenuList(ui_state->menu_selected, _ui_getChannelName);
+#endif
 }
 
 void _ui_drawMenuContacts(ui_state_t* ui_state)
