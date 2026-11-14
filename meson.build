@@ -1275,6 +1275,25 @@ dmr_tx_check_test = executable('dmr_tx_check_test',
                                           'tests/unit/dmr_tx_check.cpp'],
                                kwargs  : unit_test_opts)
 
+# DMR TX (protocols/DMR): the bursts and the modulator checked against the
+# receiver; the vocoder is a stub in the test
+dmr_src_dir = 'openrtx/src/protocols/DMR/'
+dmr_tx_test = executable('dmr_tx_test',
+                         sources : [dmr_src_dir + 'dmr_tx.c',
+                                    dmr_src_dir + 'dmr_demod.c',
+                                    dmr_src_dir + 'dmr_proto.c',
+                                    dmr_src_dir + 'dmr_fec.c',
+                                    dmr_src_dir + 'dmr_data.c',
+                                    dmr_src_dir + 'dmr_trellis.c',
+                                    dmr_src_dir + 'dmr_lrrp.c',
+                                    dmr_src_dir + 'dmr_track.c',
+                                    'tests/unit/dmr_tx.cpp'],
+                         kwargs  : unit_test_opts +
+                                   {'c_args' : linux_c_args +
+                                               ['-DDMR_DEFAULT_POLARITY=1.0f'],
+                                    'include_directories' : linux_inc +
+                                               ['openrtx/include/protocols/DMR']})
+
 gfx_text_test = executable('gfx_text_test',
                             sources : unit_test_src + ['tests/unit/gfx_text.cpp'],
                             kwargs  : unit_test_opts)
@@ -1314,4 +1333,5 @@ test('M17 Packet Frame Test', m17_packet_test)
 test('DSP Oversampling Test', dsp_oversampling_test)
 test('GFX Text Test',        gfx_text_test)
 test('DMR TX Check Test',    dmr_tx_check_test)
+test('DMR TX Test',          dmr_tx_test)
 test('M17 Baseband Replay Test', m17_replay_test, timeout : 120) # ~40 s in CI with coverage
