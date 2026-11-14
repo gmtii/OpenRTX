@@ -273,6 +273,8 @@ typedef struct ui_state_t
 #ifdef CONFIG_UI_SAVE_CHANNEL
     // Save VFO screen: # pressed once on a memory, again deletes it
     bool save_delete_armed;
+    // Memory list opened with P1 from the main screen: ESC goes back there
+    bool memories_quick;
 #endif
 #ifdef CONFIG_TETRA
     // TETRA page on the VFO screen, cycled with *: main, diagnostics, SDS

@@ -120,6 +120,7 @@ extern void _ui_drawSettingsRadio(ui_state_t* ui_state);
 extern bool _ui_drawMacroMenu(ui_state_t* ui_state);
 #ifdef CONFIG_UI_SAVE_CHANNEL
 extern void _ui_drawChannelSave(ui_state_t* ui_state);
+extern const char *_ui_modeLabel(uint8_t mode);
 #endif
 #ifdef CONFIG_SPECTRUM
 extern void _ui_drawSpectrum(ui_state_t* ui_state);
@@ -1243,6 +1244,23 @@ static uint16_t _ui_countChannels()
 }
 
 /**
+ * P1 on the VFO or memory screen: the memory list, the memory in use
+ * picked. ENTER loads one, ESC goes back to the screen it came from.
+ */
+static void _ui_openMemories(void)
+{
+    uint16_t sel = 0;
+    if((state.ui_screen == MAIN_MEM) && !state.bank_enabled
+       && (state.channel_index >= 0)
+       && (state.channel_index < _ui_countChannels()))
+        sel = state.channel_index;
+    ui_state.last_main_state = state.ui_screen;
+    ui_state.menu_selected = sel;
+    ui_state.memories_quick = true;
+    state.ui_screen = MENU_CHANNEL;
+}
+
+/**
  * Save VFO screen: UP/DOWN pick a memory or a new one, ENTER saves the VFO
  * there, # twice deletes the memory, ESC or P2 go back.
  */
@@ -1268,10 +1286,8 @@ static void _ui_fsm_channelSave(kbd_msg_t msg)
     }
     else if(msg.keys & KEY_ENTER)
     {
-        static const char *const labels[] = { "", "FM", "DMR", "M17", "T",
-                                              "AM" };
         channel_t channel = state.channel;
-        const char *label = (channel.mode < 6) ? labels[channel.mode] : "";
+        const char *label = _ui_modeLabel(channel.mode);
         memset(channel.name, 0, sizeof(channel.name));
         memset(channel.descr, 0, sizeof(channel.descr));
         sniprintf(channel.name, sizeof(channel.name), "%s %lu.%04lu", label,
@@ -2404,6 +2420,17 @@ void ui_updateFSM(bool *sync_rtx)
                                                    queueFlags);
                         }
                     }
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                    // P1: the memory list; held, the channel summary if
+                    // voice prompts are on
+                    else if((msg.keys & KEY_F1)
+                            && !(msg.long_press
+                                 && (state.settings.vpLevel > vpBeep)))
+                    {
+                        _ui_openMemories();
+                        f1Handled = true;
+                    }
+#endif
                     else if(msg.keys & KEY_F1)
                     {
                         if (state.settings.vpLevel > vpBeep)
@@ -2627,6 +2654,17 @@ void ui_updateFSM(bool *sync_rtx)
                             }
                         }
                     }
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                    // P1: the memory list; held, the channel summary if
+                    // voice prompts are on
+                    else if((msg.keys & KEY_F1)
+                            && !(msg.long_press
+                                 && (state.settings.vpLevel > vpBeep)))
+                    {
+                        _ui_openMemories();
+                        f1Handled = true;
+                    }
+#endif
                     else if(msg.keys & KEY_F1)
                     {
                         if (state.settings.vpLevel > vpBeep)
@@ -2676,6 +2714,9 @@ void ui_updateFSM(bool *sync_rtx)
                             break;
                         case M_CHANNEL:
                             state.ui_screen = MENU_CHANNEL;
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                            ui_state.memories_quick = false;
+#endif
                             break;
                         case M_CONTACTS:
                             state.ui_screen = MENU_CONTACTS;
@@ -2762,6 +2803,9 @@ void ui_updateFSM(bool *sync_rtx)
                     }
                     if(state.ui_screen == MENU_CHANNEL)
                     {
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                        ui_state.memories_quick = false;
+#endif
                         // If we were in VFO mode, save VFO channel
                         if(ui_state.last_main_state == MAIN_VFO)
                             state.vfo_channel = state.channel;
@@ -2770,6 +2814,17 @@ void ui_updateFSM(bool *sync_rtx)
                         state.ui_screen = MAIN_MEM;
                     }
                 }
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                // Opened with P1: back to the main screen
+                else if((msg.keys & (KEY_ESC | KEY_F1))
+                        && (state.ui_screen == MENU_CHANNEL)
+                        && ui_state.memories_quick)
+                {
+                    ui_state.memories_quick = false;
+                    state.ui_screen = ui_state.last_main_state;
+                    f1Handled = true;
+                }
+#endif
                 else if(msg.keys & KEY_ESC)
                     _ui_menuBack(MENU_TOP);
                 break;

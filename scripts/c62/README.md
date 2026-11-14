@@ -467,13 +467,20 @@ memories opens, with a new one at the end, picked by default.
 | Key | Action |
 |---|---|
 | **UP** / **DOWN** | Pick a memory to overwrite, or the new one |
-| **ENTER** | Save the VFO there, named after its mode and frequency (`T 390.2125`) |
+| **ENTER** | Save the VFO there, named after its mode and frequency (`T 390.2125`, `AIS 161.9750`) |
 | **#** twice | Delete the memory picked: the next ones move up |
 | **ESC** / **P2** | Back to the VFO |
 
+**P1** on the VFO or memory screen opens the list of memories, the one in
+use picked: **UP** / **DOWN** go through it, **ENTER** loads the memory
+picked, **ESC** or **P1** go back. With voice prompts on, holding P1
+still announces the channel summary.
+
 The red key (ESC) on the VFO screen switches to the memories, UP and DOWN
-go through them, and the menu's Channels list them. A memory holds the
+go through them, and the menu's Channels list them too. A memory holds the
 whole channel: mode, RX and TX frequencies, power, bandwidth and tones.
+Memories saved before every mode had its label (ACARS and AIS ones, named
+` 131.5500`) are listed with the mode they hold in front.
 The main screen starts its information line with `VFO`, or with the
 memory number (`M001`) in yellow.
 

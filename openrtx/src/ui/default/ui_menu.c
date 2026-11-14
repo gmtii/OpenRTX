@@ -612,12 +612,42 @@ int _ui_getBankName(char *buf, uint8_t max_len, uint8_t index)
     return result;
 }
 
+#ifdef CONFIG_UI_SAVE_CHANNEL
+/**
+ * Short name of an operating mode, for the names of the memories saved.
+ */
+const char *_ui_modeLabel(uint8_t mode)
+{
+    static const char *const labels[] = { "", "FM", "DMR", "M17", "T",
+                                          "AM", "ACARS", "AIS" };
+    return (mode < sizeof(labels) / sizeof(labels[0])) ? labels[mode] : "";
+}
+
+/**
+ * A memory's name; one saved without its mode (" 161.9750", before every
+ * mode had a label) gets the mode it holds in front.
+ */
+static void _ui_memoryName(char *buf, uint8_t max_len, const channel_t *ch)
+{
+    if(ch->name[0] == ' ')
+        sniprintf(buf, max_len, "%s%s", _ui_modeLabel(ch->mode), ch->name);
+    else
+        sniprintf(buf, max_len, "%s", ch->name);
+}
+#endif
+
 int _ui_getChannelName(char *buf, uint8_t max_len, uint8_t index)
 {
     channel_t channel;
     int result = cps_readChannel(&channel, index);
     if(result != -1)
+    {
+#ifdef CONFIG_UI_SAVE_CHANNEL
+        _ui_memoryName(buf, max_len, &channel);
+#else
         sniprintf(buf, max_len, "%s", channel.name);
+#endif
+    }
     return result;
 }
 
@@ -659,7 +689,9 @@ static int _ui_getSaveSlotName(char *buf, uint8_t max_len, uint8_t index)
     channel_t channel;
     if(cps_readChannel(&channel, index) != -1)
     {
-        sniprintf(buf, max_len, "M%03u %s", index + 1, channel.name);
+        char name[40];
+        _ui_memoryName(name, sizeof(name), &channel);
+        sniprintf(buf, max_len, "M%03u %s", index + 1, name);
         return 0;
     }
     if((index == 0) || (cps_readChannel(&channel, index - 1) != -1))
