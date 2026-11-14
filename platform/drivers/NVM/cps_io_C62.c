@@ -18,9 +18,9 @@
  * (nvmem_C62.c): the factory calibration and channel areas are never
  * touched. No contacts and no banks.
  *
- * The channels are kept contiguous, 0 to count - 1, as the UI lists them
- * until the first that cannot be read: deleting one moves the next ones
- * down. Each slot holds a magic, a CRC and the channel_t; the table is
+ * The channels keep their slot, 0 to 127, so the UI can show them by
+ * pages: a channel is saved in any slot and deleting one leaves its slot
+ * empty. Each slot holds a magic, a CRC and the channel_t; the table is
  * rewritten in RAM and the changed 4 kB sectors erased and written again.
  */
 #define CHANNELS_OFFSET 0x4000 /* After the settings' 16 kB */
@@ -169,9 +169,8 @@ int cps_writeContact(contact_t contact, uint16_t pos)
 
 int cps_writeChannel(channel_t channel, uint16_t pos)
 {
-    uint16_t count = countChannels();
-    if (pos > count || pos >= MAX_CHANNELS)
-        return -1; /* Overwrite one, or add one at the end */
+    if (pos >= MAX_CHANNELS)
+        return -1; /* Any slot, empty or not */
     if (loadTable() < 0)
         return -1;
     putSlot(pos, &channel);
@@ -237,15 +236,13 @@ int cps_deleteContact(uint16_t pos)
 int cps_deleteChannel(channel_t channel, uint16_t pos)
 {
     (void)channel;
-    uint16_t count = countChannels();
-    if (pos >= count)
+    if (!readSlot(pos, NULL))
         return -1;
     if (loadTable() < 0)
         return -1;
-    memmove(&table[pos * SLOT_SIZE], &table[(pos + 1) * SLOT_SIZE],
-            (count - 1 - pos) * SLOT_SIZE);
-    memset(&table[(count - 1) * SLOT_SIZE], 0xff, SLOT_SIZE);
-    return storeTable(pos, count - 1);
+    /* Its slot is left empty: the next ones keep theirs */
+    memset(&table[pos * SLOT_SIZE], 0xff, SLOT_SIZE);
+    return storeTable(pos, pos);
 }
 
 int cps_deleteBankHeader(uint16_t pos)
