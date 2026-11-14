@@ -234,9 +234,9 @@ With a group filter set, only that group's calls are followed, and a call
 being played keeps the radio on its carrier. Tune to the cell's main
 carrier: the other carriers are found from it.
 
-**\*** on the VFO or memory screen cycles the TETRA pages; on a page, a
-number goes straight to another (shown on the top bar, `3/8`), **0** back
-to the main one:
+**\*** on the VFO or memory screen cycles the TETRA pages; on a page, or
+anywhere on a memory, a number goes straight to another (shown on the top
+bar, `3/8`), **0** back to the main one:
 
 - **Main**: the cell, the call, the last SDS text or status on line 1.
 - **Diagnostics** (1): sync, phase error (10-20 % is a clean signal, 58 % is
@@ -495,6 +495,12 @@ use picked: **UP** / **DOWN** go through it, **ENTER** loads the memory
 picked, **ESC** or **P1** go back. With voice prompts on, holding P1
 still announces the channel summary. **0**-**9** go to the first memory
 of that page; UP and DOWN skip the empty places.
+
+**P2** on the memory screen passes the memory to the VFO: the VFO takes
+its channel (mode, frequencies, tones) and the VFO screen opens, to tune
+from there. On a memory, the numbers open what **\*** opens: the TETRA
+pages (**1**-**8**), the ACARS messages (**1**), the AIS and DMR stations
+(**1**) and their radar (**2**); **0** goes back to the main screen.
 
 The red key (ESC) on the VFO screen switches to the memories (the one last
 used, or the nearest if it was deleted), UP and DOWN go through them, and the menu's Channels list them too. A memory holds the

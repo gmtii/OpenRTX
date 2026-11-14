@@ -1394,6 +1394,18 @@ static bool _ui_fsm_acarsPage(kbd_msg_t msg)
     if(state.channel.mode != OPMODE_ACARS)
         return false;
 
+    // On a memory, 1 opens the page and 0 leaves it
+    if((state.ui_screen == MAIN_MEM) && input_isNumberPressed(msg))
+    {
+        uint8_t page = input_getPressedNumber(msg);
+        if(page <= 1)
+        {
+            ui_state.acars_page = (page == 1);
+            ui_state.acars_sel = 0;
+        }
+        return true;
+    }
+
     if(msg.keys & KEY_STAR)
     {
         ui_state.acars_page = !ui_state.acars_page;
@@ -1424,6 +1436,26 @@ static bool _ui_fsm_acarsPage(kbd_msg_t msg)
 }
 #endif
 
+#if defined(CONFIG_AIS) || defined(CONFIG_DMR_RX)
+/**
+ * A number on a memory with a station page: 1 the stations, 2 their radar,
+ * 0 the main screen; the others do nothing.
+ */
+static void _ui_memStationPage(uint8_t key, bool *page, uint8_t *sel)
+{
+#ifdef CONFIG_QTH_GRID
+    if(key > 2)
+        return;
+    ui_state.radar = (key == 2);
+#else
+    if(key > 1)
+        return;
+#endif
+    *page = (key != 0);
+    *sel = 0;
+}
+#endif
+
 #ifdef CONFIG_AIS
 /**
  * AIS station page of the VFO and memory screens: * opens and closes it,
@@ -1436,6 +1468,14 @@ static bool _ui_fsm_aisPage(kbd_msg_t msg)
 {
     if(state.channel.mode != OPMODE_AIS)
         return false;
+
+    // On a memory, 1 opens the station page, 2 the radar, 0 leaves them
+    if((state.ui_screen == MAIN_MEM) && input_isNumberPressed(msg))
+    {
+        _ui_memStationPage(input_getPressedNumber(msg),
+                           &ui_state.ais_page, &ui_state.ais_sel);
+        return true;
+    }
 
     if(msg.keys & KEY_STAR)
     {
@@ -1498,6 +1538,14 @@ static bool _ui_fsm_dmrPage(kbd_msg_t msg)
 {
     if(state.channel.mode != OPMODE_DMR)
         return false;
+
+    // On a memory, 1 opens the station page, 2 the radar, 0 leaves them
+    if((state.ui_screen == MAIN_MEM) && input_isNumberPressed(msg))
+    {
+        _ui_memStationPage(input_getPressedNumber(msg),
+                           &ui_state.dmr_page, &ui_state.dmr_sel);
+        return true;
+    }
 
     if(msg.keys & KEY_STAR)
     {
@@ -1602,9 +1650,11 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
         return true;
     }
 
-    // On a page, a number goes straight to that page, 0 the main one; on
-    // the main page numbers still type a frequency
-    if((ui_state.tetra_page != TETRA_PAGE_MAIN) && input_isNumberPressed(msg))
+    // On a page, or anywhere on a memory, a number goes straight to that
+    // page, 0 the main one; on the main page of the VFO numbers still type
+    // a frequency
+    if(((ui_state.tetra_page != TETRA_PAGE_MAIN)
+        || (state.ui_screen == MAIN_MEM)) && input_isNumberPressed(msg))
     {
         uint8_t page = input_getPressedNumber(msg);
         if(page < TETRA_PAGE_NUM)
@@ -2788,6 +2838,18 @@ void ui_updateFSM(bool *sync_rtx)
                             f1Handled = true;
                         }
                     }
+#ifdef CONFIG_UI_SAVE_CHANNEL
+                    else if(msg.keys & KEY_F2)
+                    {
+                        // The memory to the VFO: its channel, to tune on
+                        state.vfo_channel = state.channel;
+                        state.ui_screen = MAIN_VFO;
+                        *sync_rtx = true;
+                        vp_announceFrequencies(state.channel.rx_frequency,
+                                               state.channel.tx_frequency,
+                                               queueFlags);
+                    }
+#endif
                     else if(msg.keys & KEY_UP || msg.keys & KNOB_RIGHT)
                     {
 #ifdef CONFIG_UI_SAVE_CHANNEL
