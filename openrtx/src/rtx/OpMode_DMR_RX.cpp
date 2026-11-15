@@ -124,6 +124,15 @@ static bool txOffOk;
 static int64_t txOffFirst, txOffMin, txOffMax;
 static uint32_t txOffHalves;
 static int64_t txLatUs;
+/* How they went over the transmission: every PROFILE_EVERY halves, the
+ * offset from the first and how long the half then written took to leave
+ * (a straight rise is a rate, a rise that levels off the time base
+ * settling) */
+#define PROFILE_EVERY 8
+#define PROFILE_POINTS 24
+static int16_t txProfOff[PROFILE_POINTS];
+static uint8_t txProfLatMs[PROFILE_POINTS];
+static unsigned txProfN;
 
 /* The estimate's capture sample for an uptime, from the capture now */
 static bool capSampleAt(int64_t us, int64_t *sample)
@@ -158,7 +167,7 @@ static int64_t uptimeUs(void)
  * the two get mixed character by character.
  */
 #define TX_LOG_DELAY_MS 800
-static char txLog[640];
+static char txLog[1024];
 static size_t txLogLen;
 static long long txLogAt; /* 0: nothing to print yet */
 
@@ -428,6 +437,13 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
                (unsigned long)csk6codec_playLatencyMs());
     else
         txLogf("[DMR TX] DAC: no estimate (transmission too short)\n");
+    if (txOffOk && (txProfN > 0)) {
+        txLogf("[DMR TX] DAC profile, every %u halves (samples/ms):",
+               PROFILE_EVERY);
+        for (unsigned i = 0; i < txProfN; i++)
+            txLogf(" %+d/%u", txProfOff[i], txProfLatMs[i]);
+        txLogf("\n");
+    }
     /* The probe in capture samples: where the echo saw it and where the
      * estimate puts it (its output time, as a capture sample now) */
     if (txEchoDone && (txEchoPeak >= ECHO_MIN)) {
@@ -600,12 +616,29 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
                 txOffFirst = txOffMin = txOffMax = off;
                 txLatUs = out - written;
                 txOffOk = true;
+                txProfN = 0;
             } else {
                 if (off < txOffMin)
                     txOffMin = off;
                 if (off > txOffMax)
                     txOffMax = off;
                 txOffHalves++;
+            }
+            if (((txOffHalves % PROFILE_EVERY) == 0)
+                && (txProfN < PROFILE_POINTS)) {
+                int64_t d = off - txOffFirst;
+                if (d > INT16_MAX)
+                    d = INT16_MAX;
+                if (d < INT16_MIN)
+                    d = INT16_MIN;
+                int64_t lat = (out - written) / 1000;
+                if (lat < 0)
+                    lat = 0;
+                if (lat > 255)
+                    lat = 255;
+                txProfOff[txProfN] = (int16_t)d;
+                txProfLatMs[txProfN] = (uint8_t)lat;
+                txProfN++;
             }
         }
     }
