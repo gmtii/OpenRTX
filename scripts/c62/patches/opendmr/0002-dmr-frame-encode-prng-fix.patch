@@ -1,0 +1,70 @@
+diff --git a/encoder/mbeenc.cpp b/encoder/mbeenc.cpp
+index 55ea2ea..d631a26 100755
+--- a/encoder/mbeenc.cpp
++++ b/encoder/mbeenc.cpp
+@@ -584,8 +584,19 @@ void MBEEncoder::encode_dmr(const unsigned char* in, unsigned char* out)
+ 	/* Golay encode A */
+ 	unsigned int a = CGolay24128::encode24128(aOrig);
+ 
+-	/* PRNG scramble and Golay encode B */
+-	unsigned int p = PRNG_TABLE[aOrig] >> 1;
++	/* PRNG scramble and Golay encode B. OpenRTX C62: the mask computed as
++	 * the decoders (mbelib, OpenDMR's own) remove it, seeded by the 12 bits
++	 * of A; PRNG_TABLE does not hold that sequence, and with it no decoder
++	 * got the B block (C1) right. */
++	unsigned int p = 0U;
++	{
++		unsigned int pr = 16U * aOrig;
++		for (unsigned int i = 1U; i <= 23U; i++) {
++			pr = (173U * pr + 13849U) % 65536U;
++			if (pr >= 32768U)
++				p |= 1U << (23U - i);
++		}
++	}
+ 	unsigned int b = CGolay24128::encode23127(bOrig) >> 1;
+ 	b ^= p;
+ 
+@@ -607,3 +618,21 @@ void MBEEncoder::encode_dmr(const unsigned char* in, unsigned char* out)
+ 		WRITE_BIT(out, DMR_C_TABLE[i], cOrig & MASK);
+ 	}
+ }
++
++void MBEEncoder::encode_dmr_frame(const int16_t samples[], unsigned char out[9],
++                                  unsigned char ambe49[49])
++{
++	int b[9];
++	uint8_t bits[49];
++	unsigned char in[7] = { 0 };
++
++	encode_dmr_params(samples, b);
++	encode_49bit(bits, b);
++	for (unsigned int i = 0U; i < 49U; i++) {
++		if (bits[i])
++			in[i >> 3] |= (unsigned char)(0x80U >> (i & 7U));
++		if (ambe49)
++			ambe49[i] = bits[i];
++	}
++	encode_dmr(in, out);
++}
+diff --git a/encoder/mbeenc.h b/encoder/mbeenc.h
+index 0c5bee0..0a4da1f 100755
+--- a/encoder/mbeenc.h
++++ b/encoder/mbeenc.h
+@@ -52,6 +52,17 @@ public:
+ 	 */
+ 	void encode_dmr(const unsigned char* in, unsigned char* out);
+ 
++	/**
++	 * Encode 160 PCM samples to a 72-bit DMR frame (OpenRTX C62): the
++	 * analysis, the 49 bits in mbelib ambe_d order, then encode_dmr().
++	 *
++	 * @param samples Input: 160 PCM samples (16-bit signed, 8kHz)
++	 * @param out     Output: 72 bits (9 bytes), DMR interleaved order
++	 * @param ambe49  Output if not NULL: the 49 bits, one per byte
++	 */
++	void encode_dmr_frame(const int16_t samples[], unsigned char out[9],
++	                      unsigned char ambe49[49] = 0);
++
+ private:
+ 	imbe_vocoder vocoder;
+ 	mbe_parms cur_mp;

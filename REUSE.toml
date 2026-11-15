@@ -45,6 +45,13 @@ path = [
 SPDX-License-Identifier = "GPL-3.0-or-later"
 SPDX-FileCopyrightText = "OpenRTX Contributors"
 
+# Patches to OpenDMR (scripts/c62/fetch_opendmr.sh), which cannot carry a
+# header of their own
+[[annotations]]
+path = "scripts/c62/patches/**/*"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileCopyrightText = "OpenRTX Contributors"
+
 # This section is for font glyph sources that were taken from Pictogrammers
 [[annotations]]
 path = [

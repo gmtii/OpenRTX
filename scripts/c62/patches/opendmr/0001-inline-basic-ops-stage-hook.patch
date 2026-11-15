@@ -1,0 +1,390 @@
+diff --git a/encoder/basic_op.h b/encoder/basic_op.h
+index 56c6529..3b00f9f 100755
+--- a/encoder/basic_op.h
++++ b/encoder/basic_op.h
+@@ -22,15 +22,23 @@
+ #ifndef _BASIC_OP_H
+ #define _BASIC_OP_H
+ 
+-/*___________________________________________________________________________
+- |                                                                           |
+- |   Constants and Globals                                                   |
+- |                                                                           |
+- | $Id $
+- |___________________________________________________________________________|
+-*/
+-extern Flag Overflow;
+-extern Flag Carry;
++/*
++ * The ETSI basic operators, inline (OpenRTX C62): as functions of
++ * basicop2.cc each one was a call, thousands per frame, which made the
++ * encoder slower than real time on a 300 MHz Cortex-M33. The results are
++ * the same bit for bit; the Overflow and Carry flags are no longer kept
++ * (nothing in the encoder reads them) and div_s() no longer prints on bad
++ * arguments. On a core with the DSP extension the saturating ones are its
++ * instructions (QADD, QSUB, SSAT).
++ */
++#include "typedef.h"
++
++#if defined(__ARM_FEATURE_DSP) && __ARM_FEATURE_DSP
++#include <arm_acle.h>
++#define BASIC_OP_DSP 1
++#else
++#define BASIC_OP_DSP 0
++#endif
+ 
+ #define MAX_32 (Word32)0x7fffffffL
+ #define MIN_32 (Word32)0x80000000L
+@@ -38,52 +46,258 @@ extern Flag Carry;
+ #define MAX_16 (Word16)0x7fff
+ #define MIN_16 (Word16)0x8000
+ 
+-/*___________________________________________________________________________
+- |                                                                           |
+- |   Prototypes for basic arithmetic operators                               |
+- |___________________________________________________________________________|
+-*/
+-
+-Word16 add (Word16 var1, Word16 var2);    /* Short add,           1   */
+-Word16 sub (Word16 var1, Word16 var2);    /* Short sub,           1   */
+-Word16 abs_s (Word16 var1);               /* Short abs,           1   */
+-Word16 shl (Word16 var1, Word16 var2);    /* Short shift left,    1   */
+-Word16 shr (Word16 var1, Word16 var2);    /* Short shift right,   1   */
+-Word16 mult (Word16 var1, Word16 var2);   /* Short mult,          1   */
+-Word32 L_mult (Word16 var1, Word16 var2); /* Long mult,           1   */
+-Word16 negate (Word16 var1);              /* Short negate,        1   */
+-Word16 extract_h (Word32 L_var1);         /* Extract high,        1   */
+-Word16 extract_l (Word32 L_var1);         /* Extract low,         1   */
+-Word16 round (Word32 L_var1);             /* Round,               1   */
+-Word32 L_mac (Word32 L_var3, Word16 var1, Word16 var2);   /* Mac,  1  */
+-Word32 L_msu (Word32 L_var3, Word16 var1, Word16 var2);   /* Msu,  1  */
+-Word32 L_macNs (Word32 L_var3, Word16 var1, Word16 var2); /* Mac without
+-                                                             sat, 1   */
+-Word32 L_msuNs (Word32 L_var3, Word16 var1, Word16 var2); /* Msu without
+-                                                             sat, 1   */
+-Word32 L_add (Word32 L_var1, Word32 L_var2);    /* Long add,        2 */
+-Word32 L_sub (Word32 L_var1, Word32 L_var2);    /* Long sub,        2 */
+-Word32 L_add_c (Word32 L_var1, Word32 L_var2);  /* Long add with c, 2 */
+-Word32 L_sub_c (Word32 L_var1, Word32 L_var2);  /* Long sub with c, 2 */
+-Word32 L_negate (Word32 L_var1);                /* Long negate,     2 */
+-Word16 mult_r (Word16 var1, Word16 var2);       /* Mult with round, 2 */
+-Word32 L_shl (Word32 L_var1, Word16 var2);      /* Long shift left, 2 */
+-Word32 L_shr (Word32 L_var1, Word16 var2);      /* Long shift right, 2*/
+-Word16 shr_r (Word16 var1, Word16 var2);        /* Shift right with
+-                                                   round, 2           */
+-Word16 mac_r (Word32 L_var3, Word16 var1, Word16 var2); /* Mac with
+-                                                           rounding,2 */
+-Word16 msu_r (Word32 L_var3, Word16 var1, Word16 var2); /* Msu with
+-                                                           rounding,2 */
+-Word32 L_deposit_h (Word16 var1);        /* 16 bit var1 -> MSB,     2 */
+-Word32 L_deposit_l (Word16 var1);        /* 16 bit var1 -> LSB,     2 */
+-
+-Word32 L_shr_r (Word32 L_var1, Word16 var2); /* Long shift right with
+-                                                round,  3             */
+-Word32 L_abs (Word32 L_var1);            /* Long abs,              3  */
+-Word32 L_sat (Word32 L_var1);            /* Long saturation,       4  */
+-Word16 norm_s (Word16 var1);             /* Short norm,           15  */
+-Word16 div_s (Word16 var1, Word16 var2); /* Short division,       18  */
+-Word16 norm_l (Word32 L_var1);           /* Long norm,            30  */
++static inline Word16 saturate(Word32 L_var1)
++{
++#if BASIC_OP_DSP
++    return (Word16)__ssat(L_var1, 16);
++#else
++    if (L_var1 > 0x00007fffL)
++        return MAX_16;
++    if (L_var1 < (Word32)0xffff8000L)
++        return MIN_16;
++    return (Word16)L_var1;
++#endif
++}
++
++static inline Word16 add(Word16 var1, Word16 var2)
++{
++    return saturate((Word32)var1 + var2);
++}
++
++static inline Word16 sub(Word16 var1, Word16 var2)
++{
++    return saturate((Word32)var1 - var2);
++}
++
++static inline Word16 abs_s(Word16 var1)
++{
++    if (var1 == (Word16)0x8000)
++        return MAX_16;
++    return var1 < 0 ? (Word16)-var1 : var1;
++}
++
++static inline Word16 shr(Word16 var1, Word16 var2);
++
++static inline Word16 shl(Word16 var1, Word16 var2)
++{
++    if (var2 < 0) {
++        if (var2 < -16)
++            var2 = -16;
++        return shr(var1, (Word16)-var2);
++    }
++    if (var2 > 15)
++        return var1 == 0 ? 0 : (var1 > 0 ? MAX_16 : MIN_16);
++    Word32 result = (Word32)var1 * ((Word32)1 << var2);
++    if (result != (Word32)((Word16)result))
++        return var1 > 0 ? MAX_16 : MIN_16;
++    return (Word16)result;
++}
++
++static inline Word16 shr(Word16 var1, Word16 var2)
++{
++    if (var2 < 0) {
++        if (var2 < -16)
++            var2 = -16;
++        return shl(var1, (Word16)-var2);
++    }
++    if (var2 >= 15)
++        return var1 < 0 ? -1 : 0;
++    return (Word16)(var1 >> var2); /* arithmetic: ~((~var1) >> var2) */
++}
++
++static inline Word16 mult(Word16 var1, Word16 var2)
++{
++    return saturate(((Word32)var1 * (Word32)var2) >> 15);
++}
++
++static inline Word32 L_add(Word32 L_var1, Word32 L_var2)
++{
++#if BASIC_OP_DSP
++    return __qadd(L_var1, L_var2);
++#else
++    Word32 L_var_out = (Word32)((UWord32)L_var1 + (UWord32)L_var2);
++    if (((L_var1 ^ L_var2) & MIN_32) == 0 && ((L_var_out ^ L_var1) & MIN_32))
++        L_var_out = (L_var1 < 0) ? MIN_32 : MAX_32;
++    return L_var_out;
++#endif
++}
++
++static inline Word32 L_sub(Word32 L_var1, Word32 L_var2)
++{
++#if BASIC_OP_DSP
++    return __qsub(L_var1, L_var2);
++#else
++    Word32 L_var_out = (Word32)((UWord32)L_var1 - (UWord32)L_var2);
++    if (((L_var1 ^ L_var2) & MIN_32) != 0 && ((L_var_out ^ L_var1) & MIN_32))
++        L_var_out = (L_var1 < 0) ? MIN_32 : MAX_32;
++    return L_var_out;
++#endif
++}
++
++static inline Word32 L_mult(Word16 var1, Word16 var2)
++{
++    Word32 L_var_out = (Word32)var1 * (Word32)var2;
++#if BASIC_OP_DSP
++    return __qadd(L_var_out, L_var_out);
++#else
++    if (L_var_out != (Word32)0x40000000L)
++        return L_var_out * 2;
++    return MAX_32;
++#endif
++}
++
++static inline Word16 negate(Word16 var1)
++{
++    return (var1 == MIN_16) ? MAX_16 : (Word16)-var1;
++}
++
++static inline Word16 extract_h(Word32 L_var1)
++{
++    return (Word16)(L_var1 >> 16);
++}
++
++static inline Word16 extract_l(Word32 L_var1)
++{
++    return (Word16)L_var1;
++}
++
++static inline Word16 round(Word32 L_var1)
++{
++    return extract_h(L_add(L_var1, (Word32)0x00008000L));
++}
++
++static inline Word32 L_mac(Word32 L_var3, Word16 var1, Word16 var2)
++{
++    return L_add(L_var3, L_mult(var1, var2));
++}
++
++static inline Word32 L_msu(Word32 L_var3, Word16 var1, Word16 var2)
++{
++    return L_sub(L_var3, L_mult(var1, var2));
++}
++
++static inline Word32 L_negate(Word32 L_var1)
++{
++    return (L_var1 == MIN_32) ? MAX_32 : -L_var1;
++}
++
++static inline Word16 mult_r(Word16 var1, Word16 var2)
++{
++    return saturate(((Word32)var1 * (Word32)var2 + (Word32)0x00004000L) >> 15);
++}
++
++static inline Word32 L_shr(Word32 L_var1, Word16 var2);
++
++static inline Word32 L_shl(Word32 L_var1, Word16 var2)
++{
++    if (var2 <= 0) {
++        if (var2 < -32)
++            var2 = -32;
++        return L_shr(L_var1, (Word16)-var2);
++    }
++    /* The ETSI loop doubles var2 times and saturates at the first step
++     * that would overflow: the same as a range check of the input */
++    if (var2 >= 32)
++        return L_var1 == 0 ? 0 : (L_var1 > 0 ? MAX_32 : MIN_32);
++    if (L_var1 > (MAX_32 >> var2))
++        return MAX_32;
++    if (L_var1 < (MIN_32 >> var2))
++        return MIN_32;
++    return (Word32)((UWord32)L_var1 << var2);
++}
++
++static inline Word32 L_shr(Word32 L_var1, Word16 var2)
++{
++    if (var2 < 0) {
++        if (var2 < -32)
++            var2 = -32;
++        return L_shl(L_var1, (Word16)-var2);
++    }
++    if (var2 >= 31)
++        return L_var1 < 0 ? -1 : 0;
++    return L_var1 >> var2; /* arithmetic: ~((~L_var1) >> var2) */
++}
++
++static inline Word16 shr_r(Word16 var1, Word16 var2)
++{
++    if (var2 > 15)
++        return 0;
++    Word16 var_out = shr(var1, var2);
++    if (var2 > 0 && (var1 & ((Word16)1 << (var2 - 1))) != 0)
++        var_out++;
++    return var_out;
++}
++
++static inline Word32 L_deposit_h(Word16 var1)
++{
++    return (Word32)((UWord32)(Word32)var1 << 16);
++}
++
++static inline Word32 L_deposit_l(Word16 var1)
++{
++    return (Word32)var1;
++}
++
++static inline Word32 L_shr_r(Word32 L_var1, Word16 var2)
++{
++    if (var2 > 31)
++        return 0;
++    Word32 L_var_out = L_shr(L_var1, var2);
++    if (var2 > 0 && (L_var1 & ((Word32)1 << (var2 - 1))) != 0)
++        L_var_out++;
++    return L_var_out;
++}
++
++static inline Word32 L_abs(Word32 L_var1)
++{
++    if (L_var1 == MIN_32)
++        return MAX_32;
++    return L_var1 < 0 ? -L_var1 : L_var1;
++}
++
++static inline Word16 norm_s(Word16 var1)
++{
++    if (var1 == 0)
++        return 0;
++    if (var1 == (Word16)0xffff)
++        return 15;
++    Word32 v = var1 < 0 ? ~(Word32)var1 : (Word32)var1;
++    return (Word16)(__builtin_clz((unsigned)v) - 17);
++}
++
++static inline Word16 norm_l(Word32 L_var1)
++{
++    if (L_var1 == 0)
++        return 0;
++    if (L_var1 == (Word32)0xffffffffL)
++        return 31;
++    if (L_var1 < 0)
++        L_var1 = ~L_var1;
++    return (Word16)(__builtin_clz((unsigned)L_var1) - 1);
++}
++
++static inline Word16 div_s(Word16 var1, Word16 var2)
++{
++    if (var1 == 0)
++        return 0;
++    if (var1 == var2)
++        return MAX_16;
++    /* The 15 restoring division steps compute floor(var1 * 2^15 / var2)
++     * for 0 < var1 < var2: one hardware division */
++    if (var1 > 0 && var2 > var1)
++        return (Word16)(((Word32)var1 << 15) / var2);
++    /* Bad arguments: the ETSI steps, whatever they give */
++    Word16 var_out = 0;
++    Word32 L_num = var1, L_denom = var2;
++    for (int iteration = 0; iteration < 15; iteration++) {
++        var_out <<= 1;
++        L_num <<= 1;
++        if (L_num >= L_denom) {
++            L_num = L_sub(L_num, L_denom);
++            var_out = add(var_out, 1);
++        }
++    }
++    return var_out;
++}
+ 
+ #endif /* _BASIC_OP_H */
+diff --git a/encoder/encode.cc b/encoder/encode.cc
+index 9ac252d..de87faa 100755
+--- a/encoder/encode.cc
++++ b/encoder/encode.cc
+@@ -37,6 +37,14 @@
+ #include "ch_encode.h"
+ #include "imbe_vocoder_impl.h"
+ 
++/* Timing of each analysis step (OpenRTX C62 encoder test) */
++#ifdef IMBE_STAGE_HOOK
++void imbe_stage_mark(int stage);
++#define IMBE_STAGE(n) imbe_stage_mark(n)
++#else
++#define IMBE_STAGE(n) do { } while (0)
++#endif
++
+ const uint8_t  BIT_MASK_TABLE8[]  = { 0x80U, 0x40U, 0x20U, 0x10U, 0x08U, 0x04U, 0x02U, 0x01U };
+ #define WRITE_BIT(p,i,b)   p[(i)>>3] = (b) ? (p[(i)>>3] | BIT_MASK_TABLE8[(i)&7]) : (p[(i)>>3] & ~BIT_MASK_TABLE8[(i)&7])
+ 
+@@ -67,8 +75,10 @@ void imbe_vocoder_impl::encode(IMBE_PARAM *imbe_param, Word16 *frame_vector, Wor
+ 
+ 	dc_rmv(snd, &pitch_ref_buf[PITCH_EST_BUF_SIZE - FRAME], &dc_rmv_mem, FRAME);
+ 	pe_lpf(&pitch_ref_buf[PITCH_EST_BUF_SIZE - FRAME], &pitch_est_buf[PITCH_EST_BUF_SIZE - FRAME], pe_lpf_mem, FRAME);
++	IMBE_STAGE(1);
+ 
+ 	pitch_est(imbe_param, pitch_est_buf);
++	IMBE_STAGE(2);
+ 
+     //
+ 	// Speech windowing and FFT calculation
+@@ -92,11 +102,16 @@ void imbe_vocoder_impl::encode(IMBE_PARAM *imbe_param, Word16 *frame_vector, Wor
+ 		fft_buf[i].re = fft_buf[i].im = 0;
+ 
+ 	fft((Word16 *)&fft_buf, FFTLENGTH, 1);
++	IMBE_STAGE(3);
+ 
+ 	pitch_ref(imbe_param, fft_buf);
++	IMBE_STAGE(4);
+ 	v_uv_det(imbe_param, fft_buf);
++	IMBE_STAGE(5);
+ 	sa_encode(imbe_param);
++	IMBE_STAGE(6);
+ 	encode_frame_vector(imbe_param, frame_vector);
++	IMBE_STAGE(7);
+ }
+ 
+ void imbe_vocoder_impl::encode_4400(int16_t *pcm, uint8_t *imbe)

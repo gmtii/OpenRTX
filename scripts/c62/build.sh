@@ -23,6 +23,17 @@ fi
 west update --narrow --group-filter +csk6
 export ZEPHYR_BASE=/work/zephyr-listenai
 
+# OpenDMR (the optional DMR encoder, fetched by fetch_opendmr.sh): the
+# OpenRTX patches on a clean checkout each time
+if [ -d modules/lib/opendmr/.git ]; then
+    git -C modules/lib/opendmr checkout -q -- .
+    for p in OpenRTX/scripts/c62/patches/opendmr/*.patch; do
+        [ -e "$p" ] || continue
+        git -C modules/lib/opendmr apply "$PWD/$p"
+        echo "opendmr: applied $(basename "$p")"
+    done
+fi
+
 # Codec2 is a Meson subproject: fetch and patch it without configuring Meson
 (cd OpenRTX && meson subprojects download codec2 >/dev/null)
 
