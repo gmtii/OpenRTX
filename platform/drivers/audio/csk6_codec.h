@@ -40,6 +40,53 @@ void csk6codec_terminate(void);
 void csk6codec_setRoute(enum AudioSource source, enum AudioSink sink,
                         bool enabled);
 
+/**
+ * \brief Capture sample just after a half of the radio input stream's double
+ * buffer, when it was last filled: the stream's samples in the capture's
+ * count.
+ *
+ * @param half: 0 for the first half, 1 for the second.
+ * @param index: capture sample (48 kHz count since power on).
+ * @return false if that half was not filled yet.
+ */
+bool csk6codec_rtxInputBoundary(int half, uint64_t *index);
+
+/**
+ * \brief When a capture sample was taken: uptime, estimated from the 48 kHz
+ * sample count (before the analog and DSP delays of the capture, which are
+ * not known).
+ *
+ * @param index: capture sample.
+ * @param us: its time, in microseconds.
+ * @return false until enough frames give the estimate.
+ */
+bool csk6codec_captureTime(uint64_t index, int64_t *us);
+
+/**
+ * \brief Capture samples taken so far.
+ *
+ * @return the count since power on.
+ */
+uint64_t csk6codec_captureCount(void);
+
+/**
+ * \brief When sample n of the radio output stream leaves the DSP: its FIFO
+ * and the latency the DSP states; not the analog delays.
+ *
+ * @param sample: sample of the stream, from its start.
+ * @param us: its time, uptime in microseconds.
+ * @return false until enough frames give the estimate, or before the
+ * stream's first sample is played.
+ */
+bool csk6codec_rtxOutputTime(uint32_t sample, int64_t *us);
+
+/**
+ * \brief The playback latency the DSP states.
+ *
+ * @return milliseconds.
+ */
+uint32_t csk6codec_playLatencyMs(void);
+
 #ifdef __cplusplus
 }
 #endif

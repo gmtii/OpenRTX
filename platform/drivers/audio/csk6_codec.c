@@ -104,6 +104,74 @@ static uint32_t playback_fraction;
 static struct k_thread worker;
 K_THREAD_STACK_DEFINE(worker_stack, WORKER_STACK_SIZE);
 
+/*
+ * Sample time base, for DMR transmission through a repeater: when a radio
+ * sample was captured and when a sample written for the transmitter is
+ * played. Both run at 48 kHz; their sample 0 is placed in time (uptime, in
+ * microseconds) as the earliest instant consistent with every frame: the
+ * worker sees a captured frame up to a millisecond after it is ready, and
+ * the DSP takes played frames from its FIFO in chunks, which only make a
+ * frame look later. The minimum is over the last 64 to 128 frames, so that
+ * it follows a step (writes stalled, the DSP played silence meanwhile) and
+ * a codec clock that drifts from the CPU's. Worker writes, readers lock.
+ */
+static uint64_t cap_count;     /* Samples captured since power on */
+static int64_t cap_t0_us;      /* Time of capture sample 0 */
+/* Capture sample just after each half of the RTX input buffer, when it was
+ * last filled: per half, so that a reader late by up to a half still finds
+ * the one it read */
+static uint64_t rtx_in_boundary[2];
+static uint64_t play_count;    /* Samples written to the DSP */
+static uint64_t play_cursor;   /* Sample being written by play_frame() */
+static int64_t play_t0_us;     /* Time the DSP took sample 0 from its FIFO */
+static uint64_t rtx_out_start; /* Play sample of the RTX stream's sample 0 */
+static bool rtx_out_start_set;
+/* Per time base (0 capture, 1 play): minimum of this window and the last */
+static int64_t tb_cur[2], tb_prev[2];
+static unsigned int tb_count[2]; /* Frames in the current window */
+static bool tb_prev_ok[2];
+
+#define TB_WINDOW 64
+
+static inline int64_t samples_us(uint64_t n)
+{
+    return (int64_t)(n * 125u / 6u); /* n * 1e6 / 48000 */
+}
+
+static void timebase_reset(int which)
+{
+    tb_count[which] = 0;
+    tb_prev_ok[which] = false;
+}
+
+static void timebase_update(int which, int64_t est_us)
+{
+    if (tb_count[which] == 0 || est_us < tb_cur[which])
+        tb_cur[which] = est_us;
+    if (++tb_count[which] >= TB_WINDOW) {
+        tb_prev[which] = tb_cur[which];
+        tb_prev_ok[which] = true;
+        tb_count[which] = 0;
+    }
+    int64_t t0 = tb_cur[which];
+    if (tb_prev_ok[which] && tb_prev[which] < t0)
+        t0 = tb_prev[which];
+    if (which)
+        play_t0_us = t0;
+    else
+        cap_t0_us = t0;
+}
+
+static bool timebase_ok(int which)
+{
+    return tb_prev_ok[which]; /* A whole window seen */
+}
+
+static int64_t now_us(void)
+{
+    return (int64_t)k_ticks_to_us_floor64((uint64_t)k_uptime_ticks());
+}
+
 /**
  * Empty an FM queue.
  */
@@ -343,6 +411,7 @@ static void apply_routes(void)
     if (capture != capture_running) {
         if (capture) {
             AudioRecord_start(&record);
+            timebase_reset(0);
             disable_adc_hpf2();
 #ifdef C62_BASEBAND_DUMP
             baseband_dump_restart();
@@ -354,6 +423,7 @@ static void apply_routes(void)
     if (playback != playback_running) {
         if (playback) {
             AudioTrack_start(&playback_track);
+            timebase_reset(1);
             playback_deadline = k_uptime_get();
             playback_fraction = 0;
         } else {
@@ -414,10 +484,15 @@ static void capture_frame(void)
                         ep->position = 0;
                         if (ep->ctx->bufMode == BUF_LINEAR)
                             ep->ctx->running = 0;
+                        if (source == SOURCE_RTX)
+                            rtx_in_boundary[1] = cap_count + n + 1;
                         notify_boundary(ep);
                     } else if (ep->ctx->bufMode == BUF_CIRC_DOUBLE
-                               && ep->position == size / 2)
+                               && ep->position == size / 2) {
+                        if (source == SOURCE_RTX)
+                            rtx_in_boundary[0] = cap_count + n + 1;
                         notify_boundary(ep);
+                    }
                 }
                 in->phase = (in->phase + 1) % ep->divisor;
             }
@@ -435,6 +510,8 @@ static void capture_frame(void)
 #ifdef C62_BASEBAND_DUMP
     baseband_dump_push(dump, dumped);
 #endif
+    cap_count += record.mCblk->frameCount;
+    timebase_update(0, now_us() - samples_us(cap_count));
     ret = ICStream_Consumer_releaseFrame(ic, frame);
     if (ret == IC_OK)
         ret = ICStream_Consumer_commitRemote(ic);
@@ -466,6 +543,12 @@ static int16_t output_sample(unsigned int channel)
         return out->fm_queue.count ? queue_pop(&out->fm_queue) : 0;
     if (ep->ctx == NULL || !ep->ctx->running || out->draining)
         return 0;
+    /* Where the transmitter's stream starts in the played samples */
+    if (channel == SINK_RTX && !rtx_out_start_set && ep->position == 0
+        && out->phase == 0) {
+        rtx_out_start = play_cursor;
+        rtx_out_start_set = true;
+    }
     int16_t sample = ep->ctx->buffer[ep->position];
     if (++out->phase == ep->divisor) {
         out->phase = 0;
@@ -506,11 +589,22 @@ static void play_frame(void)
     if (AudioTrack_obtainBuffer(&playback_track, &buffer, 0) != 0)
         return;
     for (size_t n = 0; n < buffer.frameCount; n++) {
+        play_cursor = play_count + n;
         buffer.i16[2 * n] = output_sample(SINK_SPK);
         buffer.i16[2 * n + 1] = output_sample(SINK_RTX);
     }
     /* Always publish a complete frame, padding the final tail with silence. */
     AudioTrack_releaseBuffer(&playback_track, &buffer);
+    /* What the DSP has not taken yet: the rest was taken by now */
+    play_count += buffer.frameCount;
+    ICStream_Producer_fetchRemote(playback_track.mICStream);
+    {
+        const ICStreamFifo *fifo = &playback_track.mICStream->share->fifo;
+        const size_t queued = (fifo->size - fifo_avail(fifo))
+                            / (2 * sizeof(int16_t));
+        if (queued <= play_count)
+            timebase_update(1, now_us() - samples_us(play_count - queued));
+    }
     /* The DSP FIFO can accept several frames at once. Pace writes so it cannot
      * consume application halves faster than callers can refill them. Carry
      * fractional milliseconds forward and avoid catch-up bursts after stalls. */
@@ -717,6 +811,8 @@ static int stream_start(uint8_t channel, const void *config,
                 out->phase = 0;
                 out->draining = false;
                 out->deadline = 0;
+                if (channel == SINK_RTX)
+                    rtx_out_start_set = false;
             }
             ctx->priv = ep;
             ctx->running = 1;
@@ -848,3 +944,46 @@ const struct audioDriver csk6_codec_audio_driver = {
     .stop = stream_stop,
     .terminate = stream_terminate,
 };
+
+/*
+ * Sample time base (see cap_count): for the DMR transmission's timing.
+ */
+bool csk6codec_rtxInputBoundary(int half, uint64_t *index)
+{
+    k_mutex_lock(&audio_mutex, K_FOREVER);
+    *index = rtx_in_boundary[half & 1];
+    k_mutex_unlock(&audio_mutex);
+    return *index != 0;
+}
+
+bool csk6codec_captureTime(uint64_t index, int64_t *us)
+{
+    k_mutex_lock(&audio_mutex, K_FOREVER);
+    const bool ok = timebase_ok(0);
+    *us = cap_t0_us + samples_us(index);
+    k_mutex_unlock(&audio_mutex);
+    return ok;
+}
+
+uint64_t csk6codec_captureCount(void)
+{
+    k_mutex_lock(&audio_mutex, K_FOREVER);
+    const uint64_t n = cap_count;
+    k_mutex_unlock(&audio_mutex);
+    return n;
+}
+
+bool csk6codec_rtxOutputTime(uint32_t sample, int64_t *us)
+{
+    k_mutex_lock(&audio_mutex, K_FOREVER);
+    const bool ok = timebase_ok(1) && rtx_out_start_set;
+    *us = play_t0_us + samples_us(rtx_out_start + sample)
+        + (int64_t)playback_track.mLatency * 1000;
+    k_mutex_unlock(&audio_mutex);
+    return ok;
+}
+
+uint32_t csk6codec_playLatencyMs(void)
+{
+    return playback_track.mLatency;
+}
