@@ -139,7 +139,8 @@ static uint16_t fmFields[ARRAY_SIZE(m17Fields)];
 
 /**
  * Digital modes receive through the flat, wide M17 audio path: M17, and
- * TETRA, DMR and AIS (receive only).
+ * TETRA, DMR and AIS; M17, and DMR when built with its transmission, also
+ * transmit through it.
  */
 static bool flatMode(enum opmode mode)
 {
@@ -156,13 +157,16 @@ static bool amMode(enum opmode mode)
 }
 
 /**
- * Receive only modes: TETRA, DMR and AIS, demodulated in software, and the
- * AM ones, for the air band.
+ * Receive only modes: TETRA, DMR (unless built with its transmission) and
+ * AIS, demodulated in software, and the AM ones, for the air band.
  */
 static bool rxOnlyMode(enum opmode mode)
 {
-    return (mode == OPMODE_TETRA) || (mode == OPMODE_DMR)
-        || (mode == OPMODE_AIS) || amMode(mode);
+#ifndef CONFIG_DMR_TX
+    if (mode == OPMODE_DMR)
+        return true;
+#endif
+    return (mode == OPMODE_TETRA) || (mode == OPMODE_AIS) || amMode(mode);
 }
 
 /*
