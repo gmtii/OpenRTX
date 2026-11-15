@@ -56,6 +56,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_DMR` | `ON` | DMR receive mode "DMR" (section 6) |
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
 | `C62_DMR_ENC` | `AUTO` | DMR transmission, with the OpenDMR AMBE+2 encoder: on when it was fetched and the DMR voice is on (section 6) |
+| `C62_DAC_ECHO` | `OFF` | Capture the DSP's echo of the DAC, to measure the DMR transmission's timing (section 6). For experiments: with it no mode receives |
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
 | `C62_ACARS` | `ON` | ACARS receive mode "ACARS" (section 13) |
 | `C62_AIS` | `ON` | AIS receive mode "AIS" (section 14) |
@@ -421,6 +422,26 @@ the same gain as in M17. The console prints the call at its start and at
 its end, with the voice bursts that went out as silence because the
 encoder was late (`without audio in time`). The settings are kept in a
 record of their own, saved at power off.
+
+**Timing, for the repeater mode (in progress).** Through a repeater each
+burst has to leave within a millisecond or two of the repeater's timeslot.
+Two console lines measure what that needs:
+
+- `[DMR RPT] TS1 at ... ms of the 60 ms cycle (...), period ... ppm`,
+  every 5 s while a repeater (or a duplex hotspot) is heard: where its TS1
+  falls in the capture's 60 ms cycle, steady from one line to the next,
+  and its clock against the radio's.
+- `[DMR TX] DAC: a half written leaves ... ms later`, at the end of
+  each transmission (simplex too): when the audio leaves for the
+  transmitter, from the DSP's queue and the latency it states. It should
+  repeat from one transmission to the next; a jump of about 30 ms is the
+  error the repeater mode must not have.
+
+Built with `-DC62_DAC_ECHO=ON` (reception does not work in that build), a
+transmission also sends a single +3 symbol before the first burst and
+looks for it in the DSP's echo of the DAC: `[DMR TX] DAC echo: peak ...;
+estimate minus echo ... us`. That difference is the estimate's error: it
+must stay the same on every transmission.
 
 ## 7. AM mode (air band)
 

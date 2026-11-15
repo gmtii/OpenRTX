@@ -86,6 +86,34 @@ bool csk6codec_rtxInputBoundary(int half, uint64_t *index);
 bool csk6codec_captureTime(uint64_t index, int64_t *us);
 bool csk6codec_rtxOutputTime(uint32_t sample, int64_t *us);
 uint32_t csk6codec_playLatencyMs(void);
+bool csk6codec_echoArm(uint32_t samples);
+bool csk6codec_echoResult(uint64_t *index, int32_t *peak);
+}
+
+/*
+ * Where the transmission leaves the DAC, measured on every transmission
+ * for the repeater mode, which needs it within a millisecond or two:
+ *  - the estimate (csk6codec_rtxOutputTime(): the DSP's queue and the
+ *    latency it states): how long after a half is written it leaves,
+ *    taken once the DSP settled;
+ *  - with C62_DAC_ECHO, the truth: a single +3 symbol written before the
+ *    first burst and found in the DSP's echo of the DAC, against the
+ *    estimate for the same symbol.
+ */
+#define RRC_DELAY ((DMR_TX_RRC_TAPS - 1) / 2) /* Symbol to its pulse peak */
+#define PROBE_SYM (HALF_SYMS + HALF_SYMS / 2)  /* In the first half written */
+#define ECHO_WINDOW 28800                      /* 600 ms to find it */
+#define ECHO_MIN 1000                          /* Weakest echo accepted */
+#define SETTLE_HALVES 27                       /* 0.8 s: the DSP settled */
+static bool txEchoArmed, txEchoDone;
+static uint64_t txEchoIdx;
+static int32_t txEchoPeak;
+static bool txLatOk;
+static int64_t txLatUs; /* Half written to leaving, estimated */
+
+static int64_t uptimeUs(void)
+{
+    return (int64_t)k_ticks_to_us_floor64((uint64_t)k_uptime_ticks());
 }
 
 /*
@@ -255,6 +283,32 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
            (unsigned long)bursts, (unsigned long)maxUs,
            (unsigned long)dropped);
 
+    /* The DAC timing of this transmission */
+    if (txLatOk)
+        printk("[DMR TX] DAC: a half written leaves %lld.%03lld ms later "
+               "(estimate; the DSP states %lu ms)\n",
+               (long long)(txLatUs / 1000), (long long)(txLatUs % 1000),
+               (unsigned long)csk6codec_playLatencyMs());
+    else
+        printk("[DMR TX] DAC: no estimate (transmission too short)\n");
+    if (txEchoDone && (txEchoPeak >= ECHO_MIN)) {
+        int64_t echoUs, estUs;
+        const bool okEcho = csk6codec_captureTime(txEchoIdx, &echoUs);
+        const bool okEst = csk6codec_rtxOutputTime(
+            (uint32_t)(PROBE_SYM * DMR_TX_SPS + RRC_DELAY), &estUs);
+        if (okEcho && okEst)
+            printk("[DMR TX] DAC echo: peak %ld; estimate minus echo "
+                   "%lld us\n", (long)txEchoPeak,
+                   (long long)(estUs - echoUs));
+        else
+            printk("[DMR TX] DAC echo: peak %ld, no time base yet\n",
+                   (long)txEchoPeak);
+    } else if (txEchoArmed || txEchoDone) {
+        printk("[DMR TX] DAC echo: not found (peak %ld)\n",
+               (long)txEchoPeak);
+    }
+    txEchoArmed = false;
+
     k_thread_priority_set(k_current_get(), txPrevPrio);
     rtx->opStatus = OFF;
     startRx = true;
@@ -281,6 +335,11 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
             startRx = true;
             return;
         }
+        /* The probe's echo: armed before the stream starts */
+        txEchoArmed = csk6codec_echoArm(ECHO_WINDOW);
+        txEchoDone = false;
+        txEchoPeak = -1;
+        txLatOk = false;
         txPath = audioPath_request(SOURCE_MCU, SINK_RTX, PRIO_TX);
         if (txPath >= 0)
             txStream = audioStream_start(txPath, baseband, 2 * HALF_SAMPLES,
@@ -323,6 +382,10 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         return;
     }
 
+    if (txEchoArmed && !txEchoDone
+        && csk6codec_echoResult(&txEchoIdx, &txEchoPeak))
+        txEchoDone = true;
+
     /* This half, symbol by symbol */
     const int64_t h0 = txHalf * HALF_SYMS;
     for (int s = 0; s < HALF_SYMS; s++) {
@@ -348,13 +411,25 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
             txBurstSym = sym;
             txNextSym = txTermSent ? -1 : sym + FRAME_SYMS;
         }
+        static const uint8_t probe = 1; /* Dibit 01: +3 */
         const uint8_t *d = NULL;
-        if ((txBurstSym >= 0) && (sym >= txBurstSym)
-            && (sym < txBurstSym + DMR_TX_BURST_DIBITS))
+        if (txEchoArmed && (sym == PROBE_SYM))
+            d = &probe;
+        else if ((txBurstSym >= 0) && (sym >= txBurstSym)
+                 && (sym < txBurstSym + DMR_TX_BURST_DIBITS))
             d = &txBurst[sym - txBurstSym];
         dmr_mod_dibits(&txMod, d, 1, txIdle + s * DMR_TX_SPS);
     }
     outputStream_sync(txStream, true);
+    /* Once settled: when the half just written leaves, by the estimate */
+    if (!txLatOk && (txHalf >= SETTLE_HALVES)) {
+        const int64_t written = uptimeUs();
+        int64_t out;
+        if (csk6codec_rtxOutputTime((uint32_t)(txHalf * HALF_SAMPLES), &out)) {
+            txLatUs = out - written;
+            txLatOk = true;
+        }
+    }
     txIdle = outputStream_getIdleBuffer(txStream);
     txHalf++;
 
