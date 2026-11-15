@@ -111,11 +111,30 @@ bool csk6codec_echoResult(uint64_t *index, int32_t *peak);
 static bool txEchoArmed, txEchoDone;
 static uint64_t txEchoIdx;
 static int32_t txEchoPeak;
-static bool txLatOk;
-/* Half written to leaving, estimated: when the DSP settled, and the lowest
- * and highest on every half after it */
-static int64_t txLatUs, txLatMinUs, txLatMaxUs;
-static uint32_t txLatHalves;
+/*
+ * The offset between the transmitter's stream and the capture: the capture
+ * sample at which stream sample s leaves the DSP, minus s, by the estimate.
+ * Both count the codec's clock, so it should not move within a
+ * transmission; it is what places a burst in a repeater's slot, measured in
+ * capture samples. Taken on every half once the DSP settled: the first,
+ * lowest and highest. Also how long the first half then written took to
+ * leave (the DSP's queue, which changes with each start).
+ */
+static bool txOffOk;
+static int64_t txOffFirst, txOffMin, txOffMax;
+static uint32_t txOffHalves;
+static int64_t txLatUs;
+
+/* The estimate's capture sample for an uptime, from the capture now */
+static bool capSampleAt(int64_t us, int64_t *sample)
+{
+    const uint64_t cnow = csk6codec_captureCount();
+    int64_t capUs;
+    if (!csk6codec_captureTime(cnow, &capUs))
+        return false;
+    *sample = (int64_t)cnow + (us - capUs) * 48 / 1000;
+    return true;
+}
 /* The microphone opened before reception closed (see update()), and the
  * capture's starts when the PTT was taken: the capture must not stop and
  * restart around a transmission, its sample count would skip the gap */
@@ -397,35 +416,34 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
            (unsigned long)dropped);
 
     /* The DAC timing of this transmission */
-    if (txLatOk)
-        txLogf("[DMR TX] DAC: a half written leaves %lld.%03lld ms later "
-               "(estimate; %lu halves after it from %lld.%03lld to "
-               "%lld.%03lld ms; the DSP states %lu ms)\n",
+    if (txOffOk)
+        txLogf("[DMR TX] DAC: stream to capture offset %lld samples "
+               "(estimate), over %lu more halves from %+lld to %+lld; the "
+               "first half then left %lld.%03lld ms after written (the DSP "
+               "states %lu ms)\n", (long long)txOffFirst,
+               (unsigned long)txOffHalves,
+               (long long)(txOffMin - txOffFirst),
+               (long long)(txOffMax - txOffFirst),
                (long long)(txLatUs / 1000), (long long)(txLatUs % 1000),
-               (unsigned long)txLatHalves,
-               (long long)(txLatMinUs / 1000), (long long)(txLatMinUs % 1000),
-               (long long)(txLatMaxUs / 1000), (long long)(txLatMaxUs % 1000),
                (unsigned long)csk6codec_playLatencyMs());
     else
         txLogf("[DMR TX] DAC: no estimate (transmission too short)\n");
     /* The probe in capture samples: where the echo saw it and where the
      * estimate puts it (its output time, as a capture sample now) */
     if (txEchoDone && (txEchoPeak >= ECHO_MIN)) {
-        const uint64_t cnow = csk6codec_captureCount();
-        int64_t capUs, estUs;
-        const bool okCap = csk6codec_captureTime(cnow, &capUs);
-        const bool okEst = csk6codec_rtxOutputTime(
-            (uint32_t)(PROBE_SYM * DMR_TX_SPS + RRC_DELAY), &estUs);
+        const int64_t probe = PROBE_SYM * DMR_TX_SPS + RRC_DELAY;
         const int64_t echoRel = (int64_t)(txEchoIdx - txEchoArmIdx);
-        if (okCap && okEst) {
-            const int64_t estIdx = (int64_t)cnow + (estUs - capUs) * 48 / 1000;
+        int64_t estUs, estIdx;
+        if (csk6codec_rtxOutputTime((uint32_t)probe, &estUs)
+            && capSampleAt(estUs, &estIdx)) {
             const int64_t d = estIdx - (int64_t)txEchoIdx;
             txLogf("[DMR TX] DAC echo: peak %ld, %lld samples after the "
-                   "search began; the estimate %lld; estimate minus echo "
-                   "%lld samples (%lld us)\n", (long)txEchoPeak,
-                   (long long)echoRel,
-                   (long long)(estIdx - (int64_t)txEchoArmIdx),
-                   (long long)d, (long long)(d * 125 / 6));
+                   "search began; offset by the echo %lld, by the estimate "
+                   "%lld; estimate minus echo %lld samples (%lld us)\n",
+                   (long)txEchoPeak, (long long)echoRel,
+                   (long long)((int64_t)txEchoIdx - probe),
+                   (long long)(estIdx - probe), (long long)d,
+                   (long long)(d * 125 / 6));
         } else {
             txLogf("[DMR TX] DAC echo: peak %ld, %lld samples after the "
                    "search began; no time base for the estimate\n",
@@ -487,8 +505,8 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         txEchoArmed = csk6codec_echoArm(ECHO_WINDOW);
         txEchoDone = false;
         txEchoPeak = -1;
-        txLatOk = false;
-        txLatHalves = 0;
+        txOffOk = false;
+        txOffHalves = 0;
         txPath = audioPath_request(SOURCE_MCU, SINK_RTX, PRIO_TX);
         if (txPath >= 0)
             txStream = audioStream_start(txPath, baseband, 2 * HALF_SAMPLES,
@@ -570,21 +588,24 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         dmr_mod_dibits(&txMod, d, 1, txIdle + s * DMR_TX_SPS);
     }
     outputStream_sync(txStream, true);
-    /* Once settled: when the half just written leaves, by the estimate */
+    /* Once settled: the stream to capture offset of the half just written */
     if (txHalf >= SETTLE_HALVES) {
         const int64_t written = uptimeUs();
-        int64_t out;
-        if (csk6codec_rtxOutputTime((uint32_t)(txHalf * HALF_SAMPLES), &out)) {
-            const int64_t lat = out - written;
-            if (!txLatOk) {
-                txLatUs = txLatMinUs = txLatMaxUs = lat;
-                txLatOk = true;
+        const int64_t first = txHalf * HALF_SAMPLES;
+        int64_t out, cap;
+        if (csk6codec_rtxOutputTime((uint32_t)first, &out)
+            && capSampleAt(out, &cap)) {
+            const int64_t off = cap - first;
+            if (!txOffOk) {
+                txOffFirst = txOffMin = txOffMax = off;
+                txLatUs = out - written;
+                txOffOk = true;
             } else {
-                if (lat < txLatMinUs)
-                    txLatMinUs = lat;
-                if (lat > txLatMaxUs)
-                    txLatMaxUs = lat;
-                txLatHalves++;
+                if (off < txOffMin)
+                    txOffMin = off;
+                if (off > txOffMax)
+                    txOffMax = off;
+                txOffHalves++;
             }
         }
     }

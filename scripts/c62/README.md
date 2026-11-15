@@ -431,11 +431,17 @@ Two console lines measure what that needs:
   every 5 s while a repeater (or a duplex hotspot) is heard: where its TS1
   falls in the capture's 60 ms cycle, steady from one line to the next,
   and its clock against the radio's.
-- `[DMR TX] DAC: a half written leaves ... ms later`, at the end of
-  each transmission (simplex too): when the audio leaves for the
-  transmitter, from the DSP's queue and the latency it states. It should
-  repeat from one transmission to the next; a jump of about 30 ms is the
-  error the repeater mode must not have.
+- `[DMR TX] DAC: stream to capture offset ... samples (estimate), over
+  N more halves from -a to +b`, at the end of each transmission (simplex
+  too): the capture sample at which a sample written for the transmitter
+  leaves, minus its place in the stream, from the DSP's queue and the
+  latency it states. It changes with each transmission, but within one
+  it should stay within a few samples (playback and capture share the
+  codec's clock): that is what places a burst in the repeater's slot.
+- `[DMR TX] capture: ... samples/s; restarted 0 times since the PTT`:
+  the capture, which the microphone and the radio input share, kept up
+  and did not stop around the transmission, so the repeater's timing
+  measured while receiving still holds.
 
 Built with `-DC62_DAC_ECHO=ON` (reception does not work in that build), a
 transmission also sends a single +3 symbol before the first burst and
