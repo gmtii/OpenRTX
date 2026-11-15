@@ -86,6 +86,7 @@ extern "C" {
 bool csk6codec_rtxInputBoundary(int half, uint64_t *index);
 bool csk6codec_captureTime(uint64_t index, int64_t *us);
 uint64_t csk6codec_captureCount(void);
+uint32_t csk6codec_captureStarts(void);
 bool csk6codec_rtxOutputTime(uint32_t sample, int64_t *us);
 uint32_t csk6codec_playLatencyMs(void);
 bool csk6codec_echoArm(uint32_t samples);
@@ -111,7 +112,15 @@ static bool txEchoArmed, txEchoDone;
 static uint64_t txEchoIdx;
 static int32_t txEchoPeak;
 static bool txLatOk;
-static int64_t txLatUs; /* Half written to leaving, estimated */
+/* Half written to leaving, estimated: when the DSP settled, and the lowest
+ * and highest on every half after it */
+static int64_t txLatUs, txLatMinUs, txLatMaxUs;
+static uint32_t txLatHalves;
+/* The microphone opened before reception closed (see update()), and the
+ * capture's starts when the PTT was taken: the capture must not stop and
+ * restart around a transmission, its sample count would skip the gap */
+static bool txMicEarly;
+static uint32_t txCapStarts;
 
 static uint64_t txEchoArmIdx; /* Capture sample when the search began */
 /* The capture's pace during the transmission: its count and the time when
@@ -149,15 +158,72 @@ static void txLogf(const char *fmt, ...)
         txLogLen = sizeof(txLog) - 1;
 }
 
-/* Print the lines of the last transmission, once their time came */
+/*
+ * The lines of the last transmissions, kept and printed again: with the
+ * programming cable plugged in the microphone does not work, so the tests
+ * with speech are made without it and their lines read once it is back.
+ * Every 30 s, one transmission a second, oldest first. In PSRAM, cleared
+ * at enable().
+ */
+#define TX_HISTORY 8
+#define TX_HISTORY_EVERY_MS 30000
+static char txHistory[TX_HISTORY][sizeof(txLog)]
+    __attribute__((section(".psram_section")));
+static uint32_t txHistorySeq[TX_HISTORY];
+static uint32_t txSeq;           /* Transmissions so far */
+static int txHistoryNext = -1;   /* Being printed, -1 none */
+static long long txHistoryAt;    /* Next one */
+
+static void txHistoryClear(void)
+{
+    memset(txHistory, 0, sizeof(txHistory));
+    memset(txHistorySeq, 0, sizeof(txHistorySeq));
+    txSeq = 0;
+    txHistoryNext = -1;
+    txHistoryAt = getTick() + TX_HISTORY_EVERY_MS;
+}
+
+static void txHistoryPrint(void)
+{
+    const long long now = getTick();
+    if ((txSeq == 0) || (now < txHistoryAt))
+        return;
+    if (txHistoryNext < 0) {
+        printk("[DMR TX history] the last %lu transmissions:\n",
+               (unsigned long)(txSeq < TX_HISTORY ? txSeq : TX_HISTORY));
+        txHistoryNext = (txSeq <= TX_HISTORY) ? 0 : (int)(txSeq % TX_HISTORY);
+        txHistoryAt = now + 1000;
+        return;
+    }
+    const int i = txHistoryNext;
+    printk("[DMR TX history] #%lu\n%s", (unsigned long)txHistorySeq[i],
+           txHistory[i]);
+    txHistoryNext = (i + 1) % TX_HISTORY;
+    const int last = (int)((txSeq - 1) % TX_HISTORY);
+    if (i == last) {
+        txHistoryNext = -1;
+        txHistoryAt = now + TX_HISTORY_EVERY_MS;
+    } else {
+        txHistoryAt = now + 1000;
+    }
+}
+
+/* Print the lines of the last transmission, once their time came, and keep
+ * them */
 static void txLogFlush(void)
 {
-    if ((txLogAt == 0) || (getTick() < txLogAt))
+    if ((txLogAt != 0) && (getTick() >= txLogAt)) {
+        printk("%s", txLog);
+        const int i = (int)(txSeq % TX_HISTORY);
+        memcpy(txHistory[i], txLog, sizeof(txLog));
+        txHistorySeq[i] = ++txSeq;
+        txLogLen = 0;
+        txLog[0] = 0;
+        txLogAt = 0;
         return;
-    printk("%s", txLog);
-    txLogLen = 0;
-    txLog[0] = 0;
-    txLogAt = 0;
+    }
+    if (txLogAt == 0)
+        txHistoryPrint();
 }
 
 /*
@@ -316,7 +382,10 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
         audioPath_release(txPath);
     txStream = -1;
     txPath = -1;
+    /* Reception back before the microphone closes: the capture goes on */
+    startSampling();
     dmrTxEnc_stop();
+    txMicEarly = false;
 
     uint32_t bursts, maxUs, dropped;
     dmrTxEnc_stats(&bursts, &maxUs, &dropped);
@@ -330,8 +399,12 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
     /* The DAC timing of this transmission */
     if (txLatOk)
         txLogf("[DMR TX] DAC: a half written leaves %lld.%03lld ms later "
-               "(estimate; the DSP states %lu ms)\n",
+               "(estimate; %lu halves after it from %lld.%03lld to "
+               "%lld.%03lld ms; the DSP states %lu ms)\n",
                (long long)(txLatUs / 1000), (long long)(txLatUs % 1000),
+               (unsigned long)txLatHalves,
+               (long long)(txLatMinUs / 1000), (long long)(txLatMinUs % 1000),
+               (long long)(txLatMaxUs / 1000), (long long)(txLatMaxUs % 1000),
                (unsigned long)csk6codec_playLatencyMs());
     else
         txLogf("[DMR TX] DAC: no estimate (transmission too short)\n");
@@ -369,8 +442,10 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
         const int64_t us = uptimeUs() - txCapStartUs;
         if (us > 0)
             txLogf("[DMR TX] capture: %llu samples in %lld ms, %lld "
-                   "samples/s\n", (unsigned long long)c,
-                   (long long)(us / 1000), (long long)(c * 1000000 / us));
+                   "samples/s; restarted %lu times since the PTT\n",
+                   (unsigned long long)c, (long long)(us / 1000),
+                   (long long)(c * 1000000 / us),
+                   (unsigned long)(csk6codec_captureStarts() - txCapStarts));
     }
     txLogAt = getTick() + TX_LOG_DELAY_MS;
     txEchoArmed = false;
@@ -395,6 +470,9 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         dmr_mod_init(&txMod, DMR_TX_GAIN,
                      dmr->tx_invert ? !DMR_TX_INVERT : DMR_TX_INVERT);
         memset(baseband, 0, sizeof(baseband));
+        if (!txMicEarly)
+            txCapStarts = csk6codec_captureStarts();
+        txMicEarly = false;
         if (!dmrTxEnc_start()) {
             txLogf("[DMR TX] the microphone could not be opened\n");
             txLogAt = getTick() + TX_LOG_DELAY_MS;
@@ -410,6 +488,7 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         txEchoDone = false;
         txEchoPeak = -1;
         txLatOk = false;
+        txLatHalves = 0;
         txPath = audioPath_request(SOURCE_MCU, SINK_RTX, PRIO_TX);
         if (txPath >= 0)
             txStream = audioStream_start(txPath, baseband, 2 * HALF_SAMPLES,
@@ -492,12 +571,21 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
     }
     outputStream_sync(txStream, true);
     /* Once settled: when the half just written leaves, by the estimate */
-    if (!txLatOk && (txHalf >= SETTLE_HALVES)) {
+    if (txHalf >= SETTLE_HALVES) {
         const int64_t written = uptimeUs();
         int64_t out;
         if (csk6codec_rtxOutputTime((uint32_t)(txHalf * HALF_SAMPLES), &out)) {
-            txLatUs = out - written;
-            txLatOk = true;
+            const int64_t lat = out - written;
+            if (!txLatOk) {
+                txLatUs = txLatMinUs = txLatMaxUs = lat;
+                txLatOk = true;
+            } else {
+                if (lat < txLatMinUs)
+                    txLatMinUs = lat;
+                if (lat > txLatMaxUs)
+                    txLatMaxUs = lat;
+                txLatHalves++;
+            }
         }
     }
     txIdle = outputStream_getIdleBuffer(txStream);
@@ -534,6 +622,7 @@ void OpMode_DMR_RX::enable()
     dmr_demod_init();
 #ifdef CONFIG_DMR_TX
     rptReset();
+    txHistoryClear();
 #endif
     dmr_proto_set_printer(printLine);
     dmrSpeech_start();
@@ -559,6 +648,8 @@ void OpMode_DMR_RX::disable()
 
 void OpMode_DMR_RX::startSampling()
 {
+    if (basebandId >= 0)
+        return; /* Already, see txEnd() */
     basebandPath = audioPath_request(SOURCE_RTX, SINK_MCU, PRIO_RX);
     basebandId = audioStream_start(basebandPath, baseband, 2 * HALF_SAMPLES,
                                    DMR_IN_RATE, STREAM_INPUT | BUF_CIRC_DOUBLE);
@@ -588,6 +679,13 @@ void OpMode_DMR_RX::update(rtxStatus_t *const rtx, const bool newCfg)
                 startTx = true;
                 return;
             }
+#ifdef CONFIG_DMR_TX
+            /* The PTT went before the transmission started */
+            if (txMicEarly) {
+                dmrTxEnc_stop();
+                txMicEarly = false;
+            }
+#endif
             if (startRx) {
                 rtx->opStatus = RX;
                 return;
@@ -608,8 +706,13 @@ void OpMode_DMR_RX::update(rtxStatus_t *const rtx, const bool newCfg)
             return;
     }
 
-    /* PTT: stop receiving, OFF starts the transmission */
+    /* PTT: stop receiving, OFF starts the transmission. The microphone opens
+     * first, so that the capture they share does not stop */
     if (txWanted(rtx)) {
+#ifdef CONFIG_DMR_TX
+        txCapStarts = csk6codec_captureStarts();
+        txMicEarly = dmrTxEnc_start();
+#endif
         stopSampling();
         startRx = true;
         rtx->opStatus = OFF;

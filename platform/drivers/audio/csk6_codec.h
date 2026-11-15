@@ -70,6 +70,14 @@ bool csk6codec_captureTime(uint64_t index, int64_t *us);
 uint64_t csk6codec_captureCount(void);
 
 /**
+ * \brief Times the capture started since power on: it stops when no route
+ * takes from it, and its sample count does not count the gap.
+ *
+ * @return the count.
+ */
+uint32_t csk6codec_captureStarts(void);
+
+/**
  * \brief When sample n of the radio output stream leaves the DSP: its FIFO
  * and the latency the DSP states; not the analog delays.
  *

@@ -129,6 +129,7 @@ K_THREAD_STACK_DEFINE(worker_stack, WORKER_STACK_SIZE);
  * a codec clock that drifts from the CPU's. Worker writes, readers lock.
  */
 static uint64_t cap_count;     /* Samples captured since power on */
+static uint32_t cap_starts;    /* Times the capture started */
 static int64_t cap_t0_us;      /* Time of capture sample 0 */
 /* Capture sample just after each half of the RTX input buffer, when it was
  * last filled: per half, so that a reader late by up to a half still finds
@@ -448,6 +449,7 @@ static void apply_routes(void)
         if (capture) {
             AudioRecord_start(&record);
             timebase_reset(0);
+            cap_starts++;
             disable_adc_hpf2();
 #ifdef C62_BASEBAND_DUMP
             baseband_dump_restart();
@@ -1022,6 +1024,11 @@ bool csk6codec_captureTime(uint64_t index, int64_t *us)
     *us = cap_t0_us + samples_us(index);
     k_mutex_unlock(&audio_mutex);
     return ok;
+}
+
+uint32_t csk6codec_captureStarts(void)
+{
+    return cap_starts;
 }
 
 uint64_t csk6codec_captureCount(void)

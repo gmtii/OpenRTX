@@ -441,7 +441,17 @@ Built with `-DC62_DAC_ECHO=ON` (reception does not work in that build), a
 transmission also sends a single +3 symbol before the first burst and
 looks for it in the DSP's echo of the DAC: `[DMR TX] DAC echo: peak ...;
 estimate minus echo ... us`. That difference is the estimate's error: it
-must stay the same on every transmission.
+must stay the same on every transmission. The echo capture does not keep
+up with the microphone (the `capture:` line shows it), so its figures are
+only good as far as that line gives 48000 samples/s.
+
+The `[DMR TX]` lines come out 800 ms after the transmission ends (the DSP
+writes to the same serial line while its audio starts and stops), and the
+last 8 transmissions are printed again every 30 s as `[DMR TX history]`:
+the microphone does not work with the programming cable plugged in, so
+test with speech unplugged and plug it in afterwards to read them. Set the
+port first, `cskburn` leaves it at another speed: `stty -F /dev/ttyUSB0
+115200 raw -echo -ixon`.
 
 ## 7. AM mode (air band)
 
