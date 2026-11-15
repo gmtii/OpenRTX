@@ -17,6 +17,7 @@
 #include "protocols/DMR/dmr_proto.h"
 #include "rtx/OpMode_DMR_RX.hpp"
 #ifdef CONFIG_DMR_TX
+#include <stdarg.h>
 #include <string.h>
 #include <zephyr/kernel.h>
 #include "core/state.h"
@@ -84,6 +85,7 @@ static int64_t txNextSym = -1;  /* Of the next burst, -1 none */
 extern "C" {
 bool csk6codec_rtxInputBoundary(int half, uint64_t *index);
 bool csk6codec_captureTime(uint64_t index, int64_t *us);
+uint64_t csk6codec_captureCount(void);
 bool csk6codec_rtxOutputTime(uint32_t sample, int64_t *us);
 uint32_t csk6codec_playLatencyMs(void);
 bool csk6codec_echoArm(uint32_t samples);
@@ -111,9 +113,47 @@ static int32_t txEchoPeak;
 static bool txLatOk;
 static int64_t txLatUs; /* Half written to leaving, estimated */
 
+static uint64_t txEchoArmIdx; /* Capture sample when the search began */
+
 static int64_t uptimeUs(void)
 {
     return (int64_t)k_ticks_to_us_floor64((uint64_t)k_uptime_ticks());
+}
+
+/*
+ * The transmission's console lines, printed a while after it ends: the
+ * DSP writes to the same serial line when its audio starts and stops, and
+ * the two get mixed character by character.
+ */
+#define TX_LOG_DELAY_MS 800
+static char txLog[640];
+static size_t txLogLen;
+static long long txLogAt; /* 0: nothing to print yet */
+
+static void txLogf(const char *fmt, ...)
+{
+    if (txLogLen >= sizeof(txLog) - 1)
+        return;
+    va_list ap;
+    va_start(ap, fmt);
+    const int n = vsnprintf(txLog + txLogLen, sizeof(txLog) - txLogLen, fmt,
+                            ap);
+    va_end(ap);
+    if (n > 0)
+        txLogLen += (size_t)n;
+    if (txLogLen > sizeof(txLog) - 1)
+        txLogLen = sizeof(txLog) - 1;
+}
+
+/* Print the lines of the last transmission, once their time came */
+static void txLogFlush(void)
+{
+    if ((txLogAt == 0) || (getTick() < txLogAt))
+        return;
+    printk("%s", txLog);
+    txLogLen = 0;
+    txLog[0] = 0;
+    txLogAt = 0;
 }
 
 /*
@@ -276,7 +316,7 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
 
     uint32_t bursts, maxUs, dropped;
     dmrTxEnc_stats(&bursts, &maxUs, &dropped);
-    printk("[DMR TX] end: %lu ms, %lu voice bursts (%lu without audio in "
+    txLogf("[DMR TX] end: %lu ms, %lu voice bursts (%lu without audio in "
            "time), encoder %lu bursts, max %lu us, dropped %lu\n",
            (unsigned long)((uint32_t)getTick() - txStart),
            (unsigned long)txVoice, (unsigned long)txSilent,
@@ -285,28 +325,40 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
 
     /* The DAC timing of this transmission */
     if (txLatOk)
-        printk("[DMR TX] DAC: a half written leaves %lld.%03lld ms later "
+        txLogf("[DMR TX] DAC: a half written leaves %lld.%03lld ms later "
                "(estimate; the DSP states %lu ms)\n",
                (long long)(txLatUs / 1000), (long long)(txLatUs % 1000),
                (unsigned long)csk6codec_playLatencyMs());
     else
-        printk("[DMR TX] DAC: no estimate (transmission too short)\n");
+        txLogf("[DMR TX] DAC: no estimate (transmission too short)\n");
+    /* The probe in capture samples: where the echo saw it and where the
+     * estimate puts it (its output time, as a capture sample now) */
     if (txEchoDone && (txEchoPeak >= ECHO_MIN)) {
-        int64_t echoUs, estUs;
-        const bool okEcho = csk6codec_captureTime(txEchoIdx, &echoUs);
+        const uint64_t cnow = csk6codec_captureCount();
+        int64_t capUs, estUs;
+        const bool okCap = csk6codec_captureTime(cnow, &capUs);
         const bool okEst = csk6codec_rtxOutputTime(
             (uint32_t)(PROBE_SYM * DMR_TX_SPS + RRC_DELAY), &estUs);
-        if (okEcho && okEst)
-            printk("[DMR TX] DAC echo: peak %ld; estimate minus echo "
-                   "%lld us\n", (long)txEchoPeak,
-                   (long long)(estUs - echoUs));
-        else
-            printk("[DMR TX] DAC echo: peak %ld, no time base yet\n",
-                   (long)txEchoPeak);
+        const int64_t echoRel = (int64_t)(txEchoIdx - txEchoArmIdx);
+        if (okCap && okEst) {
+            const int64_t estIdx = (int64_t)cnow + (estUs - capUs) * 48 / 1000;
+            const int64_t d = estIdx - (int64_t)txEchoIdx;
+            txLogf("[DMR TX] DAC echo: peak %ld, %lld samples after the "
+                   "search began; the estimate %lld; estimate minus echo "
+                   "%lld samples (%lld us)\n", (long)txEchoPeak,
+                   (long long)echoRel,
+                   (long long)(estIdx - (int64_t)txEchoArmIdx),
+                   (long long)d, (long long)(d * 125 / 6));
+        } else {
+            txLogf("[DMR TX] DAC echo: peak %ld, %lld samples after the "
+                   "search began; no time base for the estimate\n",
+                   (long)txEchoPeak, (long long)echoRel);
+        }
     } else if (txEchoArmed || txEchoDone) {
-        printk("[DMR TX] DAC echo: not found (peak %ld)\n",
+        txLogf("[DMR TX] DAC echo: not found (peak %ld)\n",
                (long)txEchoPeak);
     }
+    txLogAt = getTick() + TX_LOG_DELAY_MS;
     txEchoArmed = false;
 
     k_thread_priority_set(k_current_get(), txPrevPrio);
@@ -330,12 +382,14 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
                      dmr->tx_invert ? !DMR_TX_INVERT : DMR_TX_INVERT);
         memset(baseband, 0, sizeof(baseband));
         if (!dmrTxEnc_start()) {
-            printk("[DMR TX] the microphone could not be opened\n");
+            txLogf("[DMR TX] the microphone could not be opened\n");
+            txLogAt = getTick() + TX_LOG_DELAY_MS;
             rtx->opStatus = OFF;
             startRx = true;
             return;
         }
         /* The probe's echo: armed before the stream starts */
+        txEchoArmIdx = csk6codec_captureCount();
         txEchoArmed = csk6codec_echoArm(ECHO_WINDOW);
         txEchoDone = false;
         txEchoPeak = -1;
@@ -346,7 +400,7 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
                                          DMR_IN_RATE,
                                          STREAM_OUTPUT | BUF_CIRC_DOUBLE);
         if (txStream < 0) {
-            printk("[DMR TX] the output to the transmitter could not be "
+            txLogf("[DMR TX] the output to the transmitter could not be "
                    "opened\n");
             txEnd(rtx);
             return;
@@ -364,7 +418,7 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         txBurstSym = -1;
         txNextSym = 2 * HALF_SYMS;
         txStart = (uint32_t)getTick();
-        printk("[DMR TX] start: ID %lu -> %s %lu, CC %u, %lu Hz, %lu mW, "
+        txLogf("[DMR TX] start: ID %lu -> %s %lu, CC %u, %lu Hz, %lu mW, "
                "polarity %s\n", (unsigned long)dmr->id,
                dmr->private_call ? "ID" : "TG", (unsigned long)dmr->tg,
                (unsigned)dmr->cc, (unsigned long)rtx->txFrequency,
@@ -377,7 +431,7 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         txEndingAt = getTick();
     }
     if (txEnding && (getTick() - txEndingAt > TX_END_MAX_MS)) {
-        printk("[DMR TX] safety stop: the transmission did not end\n");
+        txLogf("[DMR TX] safety stop: the transmission did not end\n");
         txEnd(rtx);
         return;
     }
@@ -506,6 +560,10 @@ void OpMode_DMR_RX::stopSampling()
 
 void OpMode_DMR_RX::update(rtxStatus_t *const rtx, const bool newCfg)
 {
+#ifdef CONFIG_DMR_TX
+    if (rtx->opStatus != TX)
+        txLogFlush();
+#endif
     switch (rtx->opStatus) {
         case OFF:
             radio_disableRtx();
