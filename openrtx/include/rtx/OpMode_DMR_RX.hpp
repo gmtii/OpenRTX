@@ -49,7 +49,25 @@ private:
     void startSampling();
     void stopSampling();
 
+    /**
+     * PTT held and a transmission allowed (own DMR ID set, TX not
+     * disabled); always false without CONFIG_DMR_TX.
+     */
+    bool txWanted(const rtxStatus_t *rtx);
+
+    /**
+     * One half buffer (30 ms) of the transmission, started on the first
+     * call; it ends by itself after the terminator.
+     */
+    void txUpdate(rtxStatus_t *rtx);
+
+    /**
+     * Stop transmitting and go back to receive.
+     */
+    void txEnd(rtxStatus_t *rtx);
+
     bool startRx;
+    bool startTx;
     unsigned dataErrors; // Consecutive failed reads of the sample stream
     pathId basebandPath;
     streamId basebandId;

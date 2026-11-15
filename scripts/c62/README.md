@@ -55,6 +55,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_TETRA_SPEECH` | `ON` | Play clear TETRA speech, with OpenACELP (section 5) |
 | `C62_DMR` | `ON` | DMR receive mode "DMR" (section 6) |
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
+| `C62_DMR_ENC` | `AUTO` | DMR transmission, with the OpenDMR AMBE+2 encoder: on when it was fetched and the DMR voice is on (section 6) |
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
 | `C62_ACARS` | `ON` | ACARS receive mode "ACARS" (section 13) |
 | `C62_AIS` | `ON` | AIS receive mode "AIS" (section 14) |
@@ -329,8 +330,9 @@ capture what the radio receives.
 ## 6. DMR mode
 
 **DMR** follows **T** under key **5**. The radio receives DMR in the clear:
-repeater outputs (both timeslots), simplex and hotspots. It is receive
-only: PTT does nothing. Tune to the repeater output or simplex frequency.
+repeater outputs (both timeslots), simplex and hotspots. Tune to the
+repeater output or simplex frequency. Without the encoder (below) it is
+receive only: PTT does nothing.
 
 The 48 kHz discriminator output, through the same flat, wide path as M17,
 goes to a software 4FSK demodulator (`openrtx/src/protocols/DMR/`): RRC
@@ -391,6 +393,34 @@ and build again: the build log says `DMR ON (voice ON)`. Only one slot is
 played: the first one to start talking, until its call ends. Encrypted
 calls are shown but not played. Line 4 shows the vocoder time per 20 ms
 frame (`Voice 3.2ms`). A firmware built with mbelib contains it.
+
+**Transmission (simplex).** With the DMR voice and the AMBE+2 encoder of
+[OpenDMR](https://github.com/MW0MWZ/OpenDMR) (GPL; the same patents, so it
+is not fetched by default either), PTT in the DMR mode makes a voice call
+in direct mode, to another radio or a hotspot on the same frequency:
+
+```bash
+OpenRTX/scripts/c62/fetch_opendmr.sh     # from the workspace folder
+```
+
+`build.sh` patches it on each build, and the build log says `DMR ON (voice
+ON, encoder ON)`. Then set **Settings > DMR**:
+
+| Entry | |
+|---|---|
+| **DMR ID** | Own ID, typed with the digits (**UP** deletes one, **ENTER** applies). Shown as `-` until set: PTT does nothing without it |
+| **TG/ID** | Talkgroup of a group call, or the radio called by a private one |
+| **Call** | Group or Private |
+| **CC** | Colour code, 0-15, the one of the hotspot or of the other radio |
+| **Slot** | TS1 or TS2 (for the repeater mode, not yet) |
+| **TX Polarity** | Normal, or Inverted if the other side hears nothing |
+
+A call is two voice headers, the voice while PTT is held and a
+terminator, with the carrier on throughout. The microphone goes through
+the same gain as in M17. The console prints the call at its start and at
+its end, with the voice bursts that went out as silence because the
+encoder was late (`without audio in time`). The settings are kept in a
+record of their own, saved at power off.
 
 ## 7. AM mode (air band)
 
