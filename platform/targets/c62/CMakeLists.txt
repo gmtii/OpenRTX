@@ -296,6 +296,8 @@ if(C62_DMR)
     target_compile_definitions(opendmr_enc PRIVATE
       M_PI=3.14159265358979323846 PLATFORM_C62)
     target_link_libraries(app PRIVATE opendmr_enc)
+    # DMR transmission: its settings, and the PTT in the DMR mode
+    target_compile_definitions(app PRIVATE CONFIG_DMR_TX)
   else()
     set(c62_dmr_enc OFF)
   endif()

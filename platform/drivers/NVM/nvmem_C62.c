@@ -36,6 +36,9 @@
  */
 #define VFO_ADDR (0x1000 + sizeof(channel_t))
 #define SETTINGS_ADDR (0x2000 + sizeof(settings_t))
+#ifdef CONFIG_DMR_TX
+#define DMR_ADDR (0x3000 + sizeof(dmrSettings_t))
+#endif
 
 /*
  * The flash takes writes in whole blocks of WRITE_BLOCK bytes: records are
@@ -49,6 +52,15 @@
 /* EEPROM emulation limits: records under 255 bytes */
 BUILD_ASSERT(VFO_SIZE < 255, "channel_t too large for eeep");
 BUILD_ASSERT(SETTINGS_SIZE < 255, "settings_t too large for eeep");
+#ifdef CONFIG_DMR_TX
+#define DMR_SIZE PADDED(sizeof(dmrSettings_t))
+BUILD_ASSERT(DMR_SIZE < 255, "dmrSettings_t too large for eeep");
+
+union dmrRecord {
+    dmrSettings_t settings;
+    uint8_t raw[DMR_SIZE];
+};
+#endif
 
 union vfoRecord {
     channel_t channel;
@@ -107,6 +119,9 @@ const struct nvmTable nvmTab = {
 /* CRC of what is stored, to write only what changed */
 static uint16_t settingsCrc;
 static uint16_t vfoCrc;
+#ifdef CONFIG_DMR_TX
+static uint16_t dmrCrc;
+#endif
 static bool ready;
 
 void nvm_init()
@@ -245,3 +260,47 @@ int nvm_writeSettingsAndVfo(const settings_t *settings, const channel_t *vfo)
            (unsigned long)vfo->rx_frequency, vfo->mode, ret, sret);
     return (ret < 0) ? ret : sret;
 }
+
+#ifdef CONFIG_DMR_TX
+int nvm_readDmrSettings(dmrSettings_t *settings)
+{
+    if (!ready)
+        return -1;
+
+    union dmrRecord rec = { 0 };
+    int ret = nvm_read(1, 0, DMR_ADDR, rec.raw, sizeof(rec.raw));
+    const dmrSettings_t stored = rec.settings;
+    if (ret < 0) {
+        printk("NVM: no DMR settings stored (%d)\n", ret);
+        return -1;
+    }
+    if ((stored.id > DMR_ID_MAX) || (stored.tg > DMR_ID_MAX)
+        || (stored.cc > 15) || (stored.slot < 1) || (stored.slot > 2)) {
+        printk("NVM: DMR settings not valid\n");
+        return -1;
+    }
+
+    *settings = stored;
+    dmrCrc = crc_ccitt(settings, sizeof(dmrSettings_t));
+    return 0;
+}
+
+int nvm_writeDmrSettings(const dmrSettings_t *settings)
+{
+    if (!ready)
+        return -1;
+
+    uint16_t crc = crc_ccitt(settings, sizeof(dmrSettings_t));
+    if (crc == dmrCrc)
+        return 0;
+
+    union dmrRecord rec;
+    memset(&rec, 0, sizeof(rec));
+    rec.settings = *settings;
+    int ret = nvm_write(1, 0, DMR_ADDR, rec.raw, sizeof(rec.raw));
+    if (ret == 0)
+        dmrCrc = crc;
+    printk("NVM: saved DMR settings (%d)\n", ret);
+    return ret;
+}
+#endif
