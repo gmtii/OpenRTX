@@ -20,6 +20,7 @@
 
 extern "C" {
 #include "protocols/DMR/dmr_demod.h"
+#include "protocols/DMR/dmr_fec.h"
 #include "protocols/DMR/dmr_proto.h"
 #include "protocols/DMR/dmr_tx.h"
 #include "protocols/DMR/dmr_voice.h"
@@ -306,4 +307,75 @@ TEST_CASE("DMR TX modulator levels", "[dmr][tx]")
         dmr_mod_dibits(&mod, run.data(), 40, out.data());
         REQUIRE(out.back() == -32768);
     }
+}
+
+/* ---- Repeater timing ----------------------------------------------------- */
+
+/* Positions of the TACT bits in the 24 CACH bits (ETSI TS 102 361-1) */
+static const int TACT_POS[7] = { 0, 4, 8, 12, 14, 18, 22 };
+static const uint64_t SYNC_BS_DATA = 0xDFF57D75DF5Dull;
+static const int CACH_DIBITS = 12;
+static const int SLOT_SYMS = CACH_DIBITS + DMR_TX_BURST_DIBITS; /* 30 ms */
+
+/* A repeater burst of a slot: its CACH (TACT with the TC bit, AT busy),
+ * then a CSBK with the BS data sync */
+static void repeaterSlot(int tc, uint8_t out[SLOT_SYMS])
+{
+    uint8_t bits[24] = { 0 };
+    const uint32_t tact = dmr_hamming_7_4_encode((1u << 3)
+                                                 | ((uint32_t)tc << 2));
+    for (int i = 0; i < 7; i++)
+        bits[TACT_POS[i]] = (uint8_t)((tact >> (6 - i)) & 1u);
+    for (int i = 0; i < CACH_DIBITS; i++)
+        out[i] = (uint8_t)((bits[2 * i] << 1) | bits[2 * i + 1]);
+
+    dmr_tx_t tx;
+    dmr_tx_setup(&tx, SRC, TG, true, CC);
+    dmr_tx_wakeup(&tx, 0xFFFFFFu, SRC, &out[CACH_DIBITS]);
+    /* The sync field, dibits 54..77 of the burst */
+    for (int i = 0; i < 24; i++)
+        out[CACH_DIBITS + 54 + i] =
+            (uint8_t)((SYNC_BS_DATA >> (46 - 2 * i)) & 3u);
+}
+
+TEST_CASE("DMR repeater burst timing", "[dmr][tx]")
+{
+    dmr_mod_t mod;
+    dmr_mod_init(&mod, GAIN, false);
+    REQUIRE(dmr_demod_init());
+    dmr_demod_reset();
+    dmr_proto_reset();
+    voiceRx.clear();
+
+    const int lead = 1000; /* Silent symbols first */
+    const int slots = 60;  /* 1.8 s of repeater, TS1 first */
+    feedSilence(&mod, lead);
+    std::vector<int16_t> out(SLOT_SYMS * DMR_TX_SPS);
+    for (int k = 0; k < slots; k++) {
+        uint8_t sym[SLOT_SYMS];
+        repeaterSlot(k % 2, sym);
+        dmr_mod_dibits(&mod, sym, SLOT_SYMS, out.data());
+        feed(out.data(), (int)out.size());
+    }
+    feedSilence(&mod, 100);
+
+    int slot;
+    REQUIRE(dmr_proto_bs_slot(&slot));
+    REQUIRE(dmr_demod_fed() == (uint32_t)(lead + slots * SLOT_SYMS + 100)
+                                   * DMR_TX_SPS);
+
+    /* The centre of symbol 0 of the last burst of each slot: where the
+     * modulator put its pulse, half the RRC after the symbol */
+    for (int s = 0; s < 2; s++) {
+        INFO("TS" << (s + 1));
+        uint32_t sample, seq;
+        REQUIRE(dmr_demod_slot_start(s, &sample, &seq));
+        const int last = (slots - 1) - ((slots - 1 - s) % 2);
+        const int64_t want = (int64_t)(lead + last * SLOT_SYMS + CACH_DIBITS)
+                                 * DMR_TX_SPS
+                             + (DMR_TX_RRC_TAPS - 1) / 2;
+        REQUIRE(std::llabs((int64_t)sample - want) <= 2);
+        REQUIRE(seq >= (uint32_t)(slots / 2 - 6)); /* Lock takes a few */
+    }
+    REQUIRE_FALSE(dmr_demod_slot_start(2, NULL, NULL));
 }

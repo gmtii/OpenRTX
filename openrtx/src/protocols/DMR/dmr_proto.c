@@ -60,6 +60,7 @@ typedef struct {
 
 static slot_state_t s_slot[2];
 static int s_last_slot;
+static bool s_last_bs; /* the last burst came from a repeater (with CACH) */
 static bool s_direct_family; /* last sync was a TDMA direct mode one */
 static bool
     s_ms_mode; /* MS sourced stream (simplex / hotspot uplink): no timeslots */
@@ -122,6 +123,7 @@ void dmr_proto_reset(void)
         s_slot[i].info.gps_alt_m = INT16_MIN;
     }
     s_last_slot = 0;
+    s_last_bs = false;
     s_direct_family = false;
     s_ms_mode = false;
     s_proven = false;
@@ -887,6 +889,7 @@ int dmr_proto_frame(const dmr_frame_t *f)
            (int)f->sync, slot_idx, (int)s_slot_phase_known);
 #endif
     s_last_slot = slot_idx;
+    s_last_bs = f->bs;
     st = &s_slot[slot_idx];
 
     if (is_data_sync(f->sync)) {
@@ -959,6 +962,15 @@ void dmr_proto_get_stats(dmr_proto_stats_t *out)
 bool dmr_proto_is_ms_mode(void)
 {
     return s_ms_mode;
+}
+
+bool dmr_proto_bs_slot(int *slot)
+{
+    if (!s_last_bs || !s_slot_phase_known) {
+        return false;
+    }
+    *slot = s_last_slot;
+    return true;
 }
 
 void dmr_proto_unprove(void)

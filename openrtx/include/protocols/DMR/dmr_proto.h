@@ -152,6 +152,10 @@ void dmr_proto_get_stats(dmr_proto_stats_t *out);
  * timeslots, everything is reported on slot index 0 and labelled "MS". */
 bool dmr_proto_is_ms_mode(void);
 
+/* Slot (0 = TS1, 1 = TS2) of the last burst, if it came from a repeater and
+ * its slot phase is known (from the CACH). */
+bool dmr_proto_bs_slot(int *slot);
+
 /* The demodulator flipped polarity: forget that the stream was proven, so no
  * voice is decoded until a burst validates again. */
 void dmr_proto_unprove(void);

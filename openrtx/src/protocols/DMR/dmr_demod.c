@@ -104,6 +104,11 @@ static volatile uint32_t s_overruns;
 #define DMR_DEFAULT_POLARITY (-1.0f)
 #endif
 static float s_pol = DMR_DEFAULT_POLARITY;
+
+/* Start of the last repeater burst of each slot (centre of its symbol 0),
+ * input samples, and how many were seen (see dmr_demod_slot_start()) */
+static uint32_t s_slot_t0[2];
+static uint32_t s_slot_seq[2];
 static int s_pol_bad;
 DMR_LOCK_DECLARE(s_lock);
 static dmr_demod_status_t s_pub;
@@ -191,6 +196,9 @@ void dmr_demod_reset(void)
         memset(s_ring, 0, RING * sizeof(float));
     }
     s_n = 0;
+    DMR_LOCK(s_lock);
+    s_slot_seq[0] = s_slot_seq[1] = 0;
+    DMR_UNLOCK(s_lock);
     s_locked = false;
     s_cand = false;
     s_level = 0.0f;
@@ -296,7 +304,35 @@ static int emit_frame(uint32_t tsync, dmr_sync_t sync)
         f.burst[j] = slice(ring_at(t0 + (uint32_t)(j * SPS)));
     }
     f.t_ms = tsync / (FS / 1000);
-    return dmr_proto_frame(&f);
+    const int grade = dmr_proto_frame(&f);
+
+    /* Repeater timing: where the burst of each slot starts, in input
+     * samples (the matched filter delays by half its length) */
+    int slot;
+    if (f.bs && (grade != DMR_FRAME_BAD) && dmr_proto_bs_slot(&slot)) {
+        DMR_LOCK(s_lock);
+        s_slot_t0[slot] = t0 - (uint32_t)((RRC_TAPS - 1) / 2);
+        s_slot_seq[slot]++;
+        DMR_UNLOCK(s_lock);
+    }
+    return grade;
+}
+
+bool dmr_demod_slot_start(int slot, uint32_t *sample, uint32_t *seq)
+{
+    if ((slot < 0) || (slot > 1)) {
+        return false;
+    }
+    DMR_LOCK(s_lock);
+    *sample = s_slot_t0[slot];
+    *seq = s_slot_seq[slot];
+    DMR_UNLOCK(s_lock);
+    return *seq != 0;
+}
+
+uint32_t dmr_demod_fed(void)
+{
+    return s_n;
 }
 
 /* Called for every new matched-filter sample (index s_n - 1). */

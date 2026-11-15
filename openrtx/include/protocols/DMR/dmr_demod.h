@@ -67,6 +67,15 @@ void dmr_demod_feed_iq(const float *i, const float *q, int n);
 void dmr_demod_feed_disc(const float *x, int n);
 
 void dmr_demod_get_status(dmr_demod_status_t *out);
+
+/* Input samples fed since the last init or reset (wraps at 32 bits). */
+uint32_t dmr_demod_fed(void);
+
+/* Repeater timing, to transmit in its slots: the input sample (as counted by
+ * dmr_demod_fed()) at the centre of symbol 0 of the last repeater burst of
+ * slot 0 (TS1) or 1 (TS2), and how many such bursts were seen since the last
+ * reset. False before the first one. */
+bool dmr_demod_slot_start(int slot, uint32_t *sample, uint32_t *seq);
 /* The caller lost a block of samples (it could not keep up): counted for
  * the status. The framer finds the bursts again by itself. */
 void dmr_demod_note_overrun(void);
