@@ -29,7 +29,7 @@
 /* 30 ms per half buffer: one burst period */
 #define HALF_SAMPLES 1440
 
-/* Received samples, or in transmission the baseband sent */
+/* Received samples */
 static int16_t baseband[2 * HALF_SAMPLES];
 static float samples[HALF_SAMPLES];
 
@@ -63,12 +63,25 @@ static const uint8_t ambeSilence[DMR_TX_AMBE_BYTES] = {
     0xB9, 0xE8, 0x81, 0x52, 0x61, 0x73, 0x00, 0x2A, 0x6B
 };
 
-static dmr_tx_t txCall;
-static dmr_mod_t txMod;
+/*
+ * The transmitter's audio: opened with the DMR mode and kept open, playing
+ * silence while receiving (the BK4819 ignores its audio input then), so
+ * that the DSP's playback settles once (its latency steps by some 10 ms
+ * about a second after it starts) and the offset between this stream and
+ * the capture stays the same across transmissions. In PSRAM: the worker
+ * reads it at 48 kHz, nothing else.
+ */
+static stream_sample_t txOutBuf[2 * HALF_SAMPLES]
+    __attribute__((section(".psram_section")));
 static pathId txPath = -1;
 static streamId txStream = -1;
+static int64_t txOutOpenedUs;
+
+static dmr_tx_t txCall;
+static dmr_mod_t txMod;
+static bool txActive;        /* Transmitting, from the PTT to txEnd() */
 static stream_sample_t *txIdle;
-static int64_t txHalf;       /* Stream half being written, from 1 */
+static int64_t txHalf;       /* Stream half being written */
 static bool txEnding;        /* PTT released: the terminator is next */
 static long long txEndingAt;
 static bool txTermSent;
@@ -87,38 +100,19 @@ bool csk6codec_rtxInputBoundary(int half, uint64_t *index);
 bool csk6codec_captureTime(uint64_t index, int64_t *us);
 uint64_t csk6codec_captureCount(void);
 uint32_t csk6codec_captureStarts(void);
+uint32_t csk6codec_rtxOutputHalves(void);
 bool csk6codec_rtxOutputTime(uint32_t sample, int64_t *us);
 uint32_t csk6codec_playLatencyMs(void);
-bool csk6codec_echoArm(uint32_t samples);
-bool csk6codec_echoResult(uint64_t *index, int32_t *peak);
 }
 
 /*
- * Where the transmission leaves the DAC, measured on every transmission
- * for the repeater mode, which needs it within a millisecond or two:
- *  - the estimate (csk6codec_rtxOutputTime(): the DSP's queue and the
- *    latency it states): how long after a half is written it leaves,
- *    taken once the DSP settled;
- *  - with C62_DAC_ECHO, the truth: a single +3 symbol written before the
- *    first burst and found in the DSP's echo of the DAC, against the
- *    estimate for the same symbol.
- */
-#define RRC_DELAY ((DMR_TX_RRC_TAPS - 1) / 2) /* Symbol to its pulse peak */
-#define PROBE_SYM (HALF_SYMS + HALF_SYMS / 2)  /* In the first half written */
-#define ECHO_WINDOW 28800                      /* 600 ms to find it */
-#define ECHO_MIN 1000                          /* Weakest echo accepted */
-#define SETTLE_HALVES 27                       /* 0.8 s: the DSP settled */
-static bool txEchoArmed, txEchoDone;
-static uint64_t txEchoIdx;
-static int32_t txEchoPeak;
-/*
  * The offset between the transmitter's stream and the capture: the capture
- * sample at which stream sample s leaves the DSP, minus s, by the estimate.
- * Both count the codec's clock, so it should not move within a
- * transmission; it is what places a burst in a repeater's slot, measured in
- * capture samples. Taken on every half once the DSP settled: the first,
- * lowest and highest. Also how long the first half then written took to
- * leave (the DSP's queue, which changes with each start).
+ * sample at which stream sample s leaves the DSP, minus s, by the estimate
+ * (csk6codec_rtxOutputTime(): the DSP's queue and the latency it states).
+ * Both count the codec's clock and neither restarts, so it should hold
+ * across transmissions; it is what places a burst in a repeater's slot,
+ * measured in capture samples. Taken on every half written: the first,
+ * lowest and highest. Also how long the first half took to leave.
  */
 static bool txOffOk;
 static int64_t txOffFirst, txOffMin, txOffMax;
@@ -144,13 +138,43 @@ static bool capSampleAt(int64_t us, int64_t *sample)
     *sample = (int64_t)cnow + (us - capUs) * 48 / 1000;
     return true;
 }
+/* Open the transmitter's audio, silent */
+static bool txOutOpen(void)
+{
+    if (txStream >= 0)
+        return true;
+    memset(txOutBuf, 0, sizeof(txOutBuf));
+    txPath = audioPath_request(SOURCE_MCU, SINK_RTX, PRIO_TX);
+    if (txPath >= 0)
+        txStream = audioStream_start(txPath, txOutBuf, 2 * HALF_SAMPLES,
+                                     DMR_IN_RATE,
+                                     STREAM_OUTPUT | BUF_CIRC_DOUBLE);
+    if (txStream < 0) {
+        if (txPath >= 0)
+            audioPath_release(txPath);
+        txPath = -1;
+        return false;
+    }
+    txOutOpenedUs = (int64_t)k_ticks_to_us_floor64((uint64_t)k_uptime_ticks());
+    return true;
+}
+
+static void txOutClose(void)
+{
+    if (txStream >= 0)
+        audioStream_terminate(txStream);
+    if (txPath >= 0)
+        audioPath_release(txPath);
+    txStream = -1;
+    txPath = -1;
+}
+
 /* The microphone opened before reception closed (see update()), and the
  * capture's starts when the PTT was taken: the capture must not stop and
  * restart around a transmission, its sample count would skip the gap */
 static bool txMicEarly;
 static uint32_t txCapStarts;
 
-static uint64_t txEchoArmIdx; /* Capture sample when the search began */
 /* The capture's pace during the transmission: its count and the time when
  * the transmission started */
 static uint64_t txCapStart;
@@ -404,12 +428,10 @@ bool OpMode_DMR_RX::txWanted(const rtxStatus_t *rtx)
 
 void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
 {
-    if (txStream >= 0)
-        audioStream_stop(txStream); /* Plays what is queued, then stops */
-    if (txPath >= 0)
-        audioPath_release(txPath);
-    txStream = -1;
-    txPath = -1;
+    /* The audio stays open, silent: the tail written last is silence, and
+     * the halves are cleared in case the transmission was cut short */
+    memset(txOutBuf, 0, sizeof(txOutBuf));
+    txActive = false;
     /* Reception back before the microphone closes: the capture goes on */
     startSampling();
     dmrTxEnc_stop();
@@ -428,13 +450,14 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
     if (txOffOk)
         txLogf("[DMR TX] DAC: stream to capture offset %lld samples "
                "(estimate), over %lu more halves from %+lld to %+lld; the "
-               "first half then left %lld.%03lld ms after written (the DSP "
-               "states %lu ms)\n", (long long)txOffFirst,
-               (unsigned long)txOffHalves,
+               "first half left %lld.%03lld ms after written (the DSP "
+               "states %lu ms); audio open %lld s before\n",
+               (long long)txOffFirst, (unsigned long)txOffHalves,
                (long long)(txOffMin - txOffFirst),
                (long long)(txOffMax - txOffFirst),
                (long long)(txLatUs / 1000), (long long)(txLatUs % 1000),
-               (unsigned long)csk6codec_playLatencyMs());
+               (unsigned long)csk6codec_playLatencyMs(),
+               (long long)((txCapStartUs - txOutOpenedUs) / 1000000));
     else
         txLogf("[DMR TX] DAC: no estimate (transmission too short)\n");
     if (txOffOk && (txProfN > 0)) {
@@ -443,31 +466,6 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
         for (unsigned i = 0; i < txProfN; i++)
             txLogf(" %+d/%u", txProfOff[i], txProfLatMs[i]);
         txLogf("\n");
-    }
-    /* The probe in capture samples: where the echo saw it and where the
-     * estimate puts it (its output time, as a capture sample now) */
-    if (txEchoDone && (txEchoPeak >= ECHO_MIN)) {
-        const int64_t probe = PROBE_SYM * DMR_TX_SPS + RRC_DELAY;
-        const int64_t echoRel = (int64_t)(txEchoIdx - txEchoArmIdx);
-        int64_t estUs, estIdx;
-        if (csk6codec_rtxOutputTime((uint32_t)probe, &estUs)
-            && capSampleAt(estUs, &estIdx)) {
-            const int64_t d = estIdx - (int64_t)txEchoIdx;
-            txLogf("[DMR TX] DAC echo: peak %ld, %lld samples after the "
-                   "search began; offset by the echo %lld, by the estimate "
-                   "%lld; estimate minus echo %lld samples (%lld us)\n",
-                   (long)txEchoPeak, (long long)echoRel,
-                   (long long)((int64_t)txEchoIdx - probe),
-                   (long long)(estIdx - probe), (long long)d,
-                   (long long)(d * 125 / 6));
-        } else {
-            txLogf("[DMR TX] DAC echo: peak %ld, %lld samples after the "
-                   "search began; no time base for the estimate\n",
-                   (long)txEchoPeak, (long long)echoRel);
-        }
-    } else if (txEchoArmed || txEchoDone) {
-        txLogf("[DMR TX] DAC echo: not found (peak %ld)\n",
-               (long)txEchoPeak);
     }
     /* Samples the capture counted against the time that passed: 48 kHz if
      * it kept up (the microphone and the radio input share it) */
@@ -482,7 +480,6 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
                    (unsigned long)(csk6codec_captureStarts() - txCapStarts));
     }
     txLogAt = getTick() + TX_LOG_DELAY_MS;
-    txEchoArmed = false;
 
     k_thread_priority_set(k_current_get(), txPrevPrio);
     rtx->opStatus = OFF;
@@ -503,7 +500,6 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         dmr_tx_setup(&txCall, dmr->id, dmr->tg, !dmr->private_call, dmr->cc);
         dmr_mod_init(&txMod, DMR_TX_GAIN,
                      dmr->tx_invert ? !DMR_TX_INVERT : DMR_TX_INVERT);
-        memset(baseband, 0, sizeof(baseband));
         if (!txMicEarly)
             txCapStarts = csk6codec_captureStarts();
         txMicEarly = false;
@@ -514,28 +510,22 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
             startRx = true;
             return;
         }
-        /* The probe's echo: armed before the stream starts */
-        txEchoArmIdx = csk6codec_captureCount();
-        txCapStart = txEchoArmIdx;
+        txActive = true;
+        txCapStart = csk6codec_captureCount();
         txCapStartUs = uptimeUs();
-        txEchoArmed = csk6codec_echoArm(ECHO_WINDOW);
-        txEchoDone = false;
-        txEchoPeak = -1;
         txOffOk = false;
         txOffHalves = 0;
-        txPath = audioPath_request(SOURCE_MCU, SINK_RTX, PRIO_TX);
-        if (txPath >= 0)
-            txStream = audioStream_start(txPath, baseband, 2 * HALF_SAMPLES,
-                                         DMR_IN_RATE,
-                                         STREAM_OUTPUT | BUF_CIRC_DOUBLE);
-        if (txStream < 0) {
+        if (!txOutOpen()) {
             txLogf("[DMR TX] the output to the transmitter could not be "
                    "opened\n");
             txEnd(rtx);
             return;
         }
+        /* The stream played silence meanwhile: take up its boundaries, then
+         * write the half after the one it plays */
+        outputStream_sync(txStream, false);
         txIdle = outputStream_getIdleBuffer(txStream);
-        txHalf = 1; /* The stream plays its first half while we fill this */
+        txHalf = (int64_t)csk6codec_rtxOutputHalves() + 1;
         /* Above the encoder thread (13): the transmitter must be fed every
          * 30 ms, while a burst of three frames takes it up to 35 ms */
         k_thread_priority_set(k_current_get(), 12);
@@ -545,7 +535,7 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         txHeaders = DMR_TX_HEADERS;
         txVoice = txSilent = 0;
         txBurstSym = -1;
-        txNextSym = 2 * HALF_SYMS;
+        txNextSym = (txHalf + 1) * HALF_SYMS; /* A half of silence first */
         txStart = (uint32_t)getTick();
         txLogf("[DMR TX] start: ID %lu -> %s %lu, CC %u, %lu Hz, %lu mW, "
                "polarity %s\n", (unsigned long)dmr->id,
@@ -564,10 +554,6 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         txEnd(rtx);
         return;
     }
-
-    if (txEchoArmed && !txEchoDone
-        && csk6codec_echoResult(&txEchoIdx, &txEchoPeak))
-        txEchoDone = true;
 
     /* This half, symbol by symbol */
     const int64_t h0 = txHalf * HALF_SYMS;
@@ -594,18 +580,15 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
             txBurstSym = sym;
             txNextSym = txTermSent ? -1 : sym + FRAME_SYMS;
         }
-        static const uint8_t probe = 1; /* Dibit 01: +3 */
         const uint8_t *d = NULL;
-        if (txEchoArmed && (sym == PROBE_SYM))
-            d = &probe;
-        else if ((txBurstSym >= 0) && (sym >= txBurstSym)
-                 && (sym < txBurstSym + DMR_TX_BURST_DIBITS))
+        if ((txBurstSym >= 0) && (sym >= txBurstSym)
+            && (sym < txBurstSym + DMR_TX_BURST_DIBITS))
             d = &txBurst[sym - txBurstSym];
         dmr_mod_dibits(&txMod, d, 1, txIdle + s * DMR_TX_SPS);
     }
     outputStream_sync(txStream, true);
-    /* Once settled: the stream to capture offset of the half just written */
-    if (txHalf >= SETTLE_HALVES) {
+    /* The stream to capture offset of the half just written */
+    {
         const int64_t written = uptimeUs();
         const int64_t first = txHalf * HALF_SAMPLES;
         int64_t out, cap;
@@ -643,7 +626,8 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         }
     }
     txIdle = outputStream_getIdleBuffer(txStream);
-    txHalf++;
+    /* The half after the one playing now, even if one went by unwritten */
+    txHalf = (int64_t)csk6codec_rtxOutputHalves() + 1;
 
     /* The terminator and its tail are queued */
     if (txTermSent && (h0 >= txTermEnd))
@@ -677,6 +661,9 @@ void OpMode_DMR_RX::enable()
 #ifdef CONFIG_DMR_TX
     rptReset();
     txHistoryClear();
+    if (!txOutOpen())
+        printk("[DMR TX] the output to the transmitter could not be "
+               "opened\n");
 #endif
     dmr_proto_set_printer(printLine);
     dmrSpeech_start();
@@ -686,10 +673,11 @@ void OpMode_DMR_RX::enable()
 void OpMode_DMR_RX::disable()
 {
 #ifdef CONFIG_DMR_TX
-    if ((txStream >= 0) || (txPath >= 0)) {
+    if (txActive) {
         rtxStatus_t dummy;
         txEnd(&dummy);
     }
+    txOutClose();
 #endif
     startRx = false;
     startTx = false;

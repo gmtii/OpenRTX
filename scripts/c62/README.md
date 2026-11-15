@@ -56,7 +56,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_DMR` | `ON` | DMR receive mode "DMR" (section 6) |
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
 | `C62_DMR_ENC` | `AUTO` | DMR transmission, with the OpenDMR AMBE+2 encoder: on when it was fetched and the DMR voice is on (section 6) |
-| `C62_DAC_ECHO` | `OFF` | Capture the DSP's echo of the DAC, to measure the DMR transmission's timing (section 6). For experiments: with it no mode receives |
+| `C62_DAC_ECHO` | `OFF` | Capture the DSP's echo of the DAC. For experiments: in that layout the DSP captures at 16 kHz, so no mode receives (section 6) |
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
 | `C62_ACARS` | `ON` | ACARS receive mode "ACARS" (section 13) |
 | `C62_AIS` | `ON` | AIS receive mode "AIS" (section 14) |
@@ -435,21 +435,20 @@ Two console lines measure what that needs:
   N more halves from -a to +b`, at the end of each transmission (simplex
   too): the capture sample at which a sample written for the transmitter
   leaves, minus its place in the stream, from the DSP's queue and the
-  latency it states. It changes with each transmission, but within one
-  it should stay within a few samples (playback and capture share the
-  codec's clock): that is what places a burst in the repeater's slot.
+  latency it states. The transmitter's audio opens with the DMR mode and
+  stays open, playing silence while receiving: the DSP's output latency
+  steps by some 10 ms about a second after it starts, and only once. So
+  the offset should hold, within a few samples, across the transmissions
+  made in the mode (`audio open ... s before` tells how long it had been
+  open): that is what places a burst in the repeater's slot.
 - `[DMR TX] capture: ... samples/s; restarted 0 times since the PTT`:
   the capture, which the microphone and the radio input share, kept up
   and did not stop around the transmission, so the repeater's timing
   measured while receiving still holds.
 
-Built with `-DC62_DAC_ECHO=ON` (reception does not work in that build), a
-transmission also sends a single +3 symbol before the first burst and
-looks for it in the DSP's echo of the DAC: `[DMR TX] DAC echo: peak ...;
-estimate minus echo ... us`. That difference is the estimate's error: it
-must stay the same on every transmission. The echo capture does not keep
-up with the microphone (the `capture:` line shows it), so its figures are
-only good as far as that line gives 48000 samples/s.
+The DSP's echo of the DAC (`-DC62_DAC_ECHO=ON`) does not serve to check
+the estimate: in that layout the DSP captures at 16 kHz, not 48 kHz, so
+the radio input, the microphone and every time base are wrong in it.
 
 The `[DMR TX]` lines come out 800 ms after the transmission ends (the DSP
 writes to the same serial line while its audio starts and stops), and the

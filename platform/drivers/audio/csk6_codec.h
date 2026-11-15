@@ -78,6 +78,15 @@ uint64_t csk6codec_captureCount(void);
 uint32_t csk6codec_captureStarts(void);
 
 /**
+ * \brief Boundaries the radio output stream went through since it started:
+ * with a double buffer, the half it plays now (the stream's samples from
+ * that number times half the buffer).
+ *
+ * @return the count.
+ */
+uint32_t csk6codec_rtxOutputHalves(void);
+
+/**
  * \brief When sample n of the radio output stream leaves the DSP: its FIFO
  * and the latency the DSP states; not the analog delays.
  *

@@ -1031,6 +1031,14 @@ uint32_t csk6codec_captureStarts(void)
     return cap_starts;
 }
 
+uint32_t csk6codec_rtxOutputHalves(void)
+{
+    k_mutex_lock(&audio_mutex, K_FOREVER);
+    const uint32_t n = outputs[SINK_RTX].endpoint.boundaries;
+    k_mutex_unlock(&audio_mutex);
+    return n;
+}
+
 uint64_t csk6codec_captureCount(void)
 {
     k_mutex_lock(&audio_mutex, K_FOREVER);
