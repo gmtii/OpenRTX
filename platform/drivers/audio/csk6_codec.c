@@ -11,6 +11,7 @@
 #include <csk6_cm33/include/venus_ap.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/printk.h>
 #include <zephyr/sys/sys_io.h>
 #include <hwconfig.h>
 #include "csk6_codec.h"
@@ -33,6 +34,18 @@ LOG_MODULE_REGISTER(csk6_codec, LOG_LEVEL_INF);
 #define DSP_SAMPLE_RATE 48000
 #define CAPTURE_FRAME_SAMPLES (DSP_SAMPLE_RATE / 100)
 #define RECORD_CHANNELS (CHANNEL_IN_LEFT | CHANNEL_IN_RIGHT)
+/*
+ * C62_DAC_ECHO, for experiments only: also capture the DSP's echo reference
+ * of the DAC (channels 0xcc, the only layout it takes with it, 6 channels),
+ * which shows in capture samples when a sample written for the transmitter
+ * really leaves the DAC. With it the radio channel comes deformed and no
+ * mode decodes, TETRA included: it serves only to time the transmission.
+ */
+#ifdef C62_DAC_ECHO
+#define CAPTURE_CHANNELS (RECORD_CHANNELS | CHANNEL_IN_ECHO)
+#else
+#define CAPTURE_CHANNELS RECORD_CHANNELS
+#endif
 /* Capacity per FM output; not a target fill level. */
 #define QUEUE_MS 160
 #define QUEUE_SAMPLES (DSP_SAMPLE_RATE * QUEUE_MS / MSEC_PER_SEC)
@@ -132,6 +145,18 @@ static unsigned int tb_count[2]; /* Frames in the current window */
 static bool tb_prev_ok[2];
 
 #define TB_WINDOW 64
+
+/* Echo reference of the transmitter's DAC channel in the capture frames
+ * (-1: none, see C62_DAC_ECHO), and the search for its strongest sample
+ * over a window of capture samples */
+static int echo_channel = -1;
+static char echo_diag[64];       /* The capture layout the DSP took */
+static uint32_t echo_left;       /* Samples still to search, 0 = idle */
+static int32_t echo_peak;        /* Largest |sample| so far */
+static uint64_t echo_peak_index; /* Its capture sample */
+static bool echo_done;
+static bool echo_found;          /* The pulse started */
+#define ECHO_THRESHOLD 1000
 
 static inline int64_t samples_us(uint64_t n)
 {
@@ -343,13 +368,13 @@ static int open_dsp(void)
     stage = "48k ADC/DAC configuration";
     char config[64];
     snprintf(config, sizeof(config), "samplingRate=%u;channels=%u",
-             (unsigned int)DSP_SAMPLE_RATE, (unsigned int)RECORD_CHANNELS);
+             (unsigned int)DSP_SAMPLE_RATE, (unsigned int)CAPTURE_CHANNELS);
     ret = set_dsp_param(config);
     if (ret != 0)
         goto fail;
     stage = "48k recording constructor";
     ret = AudioRecord_ctor(&record, 0, DSP_SAMPLE_RATE, PCM_16_BIT,
-                           RECORD_CHANNELS, CAPTURE_FRAME_SAMPLES, NULL);
+                           CAPTURE_CHANNELS, CAPTURE_FRAME_SAMPLES, NULL);
     if (ret != 0)
         goto fail;
 
@@ -363,6 +388,17 @@ static int open_dsp(void)
         ret = -EINVAL;
         goto fail_record;
     }
+#ifdef C62_DAC_ECHO
+    /* The echo of the right channel: the 6th of a full frame, else the
+     * last */
+    if (share->channelCount >= 3)
+        echo_channel = (share->channelCount >= 6) ? 5
+                                                  : share->channelCount - 1;
+#endif
+    snprintf(echo_diag, sizeof(echo_diag), "channels %#x, %d captured, echo %d",
+             (unsigned int)CAPTURE_CHANNELS, share->channelCount,
+             echo_channel);
+    printk("C62 audio: %s\n", echo_diag);
     stage = "48k stereo playback constructor";
     ret = AudioTrack_ctor(&playback_track, DSP_SAMPLE_RATE, PCM_16_BIT,
                           CHANNEL_OUT_STEREO, 0, NULL);
@@ -510,6 +546,29 @@ static void capture_frame(void)
 #ifdef C62_BASEBAND_DUMP
     baseband_dump_push(dump, dumped);
 #endif
+    if (echo_left > 0 && echo_channel >= 0) {
+        for (size_t n = 0; n < record.mCblk->frameCount && echo_left > 0;
+             n++, echo_left--) {
+            int32_t v = samples[n * ic->share->channelCount + echo_channel];
+            if (v < 0)
+                v = -v;
+            /* The pulse is the first thing after silence: from the first
+             * sample above the threshold, its peak within 40 samples (the
+             * filter's half length); later signal is not looked at */
+            if (!echo_found && v >= ECHO_THRESHOLD) {
+                echo_found = true;
+                echo_peak = -1;
+                if (echo_left > 40)
+                    echo_left = 40;
+            }
+            if (v > echo_peak) {
+                echo_peak = v;
+                echo_peak_index = cap_count + n;
+            }
+        }
+        if (echo_left == 0)
+            echo_done = true;
+    }
     cap_count += record.mCblk->frameCount;
     timebase_update(0, now_us() - samples_us(cap_count));
     ret = ICStream_Consumer_releaseFrame(ic, frame);
@@ -986,4 +1045,32 @@ bool csk6codec_rtxOutputTime(uint32_t sample, int64_t *us)
 uint32_t csk6codec_playLatencyMs(void)
 {
     return playback_track.mLatency;
+}
+
+bool csk6codec_echoArm(uint32_t samples)
+{
+    k_mutex_lock(&audio_mutex, K_FOREVER);
+    const bool ok = echo_channel >= 0;
+    echo_peak = -1;
+    echo_peak_index = 0;
+    echo_done = false;
+    echo_found = false;
+    echo_left = ok ? samples : 0;
+    k_mutex_unlock(&audio_mutex);
+    return ok;
+}
+
+bool csk6codec_echoResult(uint64_t *index, int32_t *peak)
+{
+    k_mutex_lock(&audio_mutex, K_FOREVER);
+    const bool done = echo_done;
+    *index = echo_peak_index;
+    *peak = echo_peak;
+    k_mutex_unlock(&audio_mutex);
+    return done;
+}
+
+const char *csk6codec_echoDiag(void)
+{
+    return echo_diag;
 }

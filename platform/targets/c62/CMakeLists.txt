@@ -88,6 +88,10 @@ set(C62_DMR_VOICE AUTO CACHE STRING
 #   mbelib it uses. AUTO (default): on when it is there.
 set(C62_DMR_ENC AUTO CACHE STRING
     "DMR AMBE+2 encoder with OpenDMR: AUTO (if fetched), ON, OFF")
+# C62_DAC_ECHO: capture the DSP's echo reference of the DAC, which shows
+#   when the transmitter's samples really leave it (DMR transmission
+#   timing). For experiments only: with it no mode receives.
+option(C62_DAC_ECHO "Capture the DAC echo reference (no reception)" OFF)
 # C62_AM: AM receive mode ("AM" under key 5, after DMR), with the BK4819 AM
 #   detector, and VHF reception down to 108 MHz for the air band.
 option(C62_AM "AM receive mode and air band" ON)
@@ -111,6 +115,9 @@ set(C62_QTH_GRID "IL18ul" CACHE STRING "Own Maidenhead locator")
 
 if(C62_WIDE_RX)
   target_compile_definitions(app PRIVATE C62_WIDE_RX)
+endif()
+if(C62_DAC_ECHO)
+  target_compile_definitions(app PRIVATE C62_DAC_ECHO)
 endif()
 if(C62_REG43_SWEEP)
   target_compile_definitions(app PRIVATE C62_REG43_SWEEP

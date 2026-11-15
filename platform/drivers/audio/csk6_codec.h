@@ -87,6 +87,34 @@ bool csk6codec_rtxOutputTime(uint32_t sample, int64_t *us);
  */
 uint32_t csk6codec_playLatencyMs(void);
 
+/**
+ * \brief Look for a test pulse written for the transmitter in the DSP's
+ * echo reference of the DAC (built with C62_DAC_ECHO): its strongest sample
+ * over the next n capture samples, to know in which capture sample a
+ * written sample leaves the DAC.
+ *
+ * @param samples: capture samples to search.
+ * @return false if the DSP gives no echo reference.
+ */
+bool csk6codec_echoArm(uint32_t samples);
+
+/**
+ * \brief The result of the search armed by csk6codec_echoArm().
+ *
+ * @param index: capture sample of the strongest echo sample.
+ * @param peak: its magnitude, -1 if nothing was found.
+ * @return true once the samples are searched.
+ */
+bool csk6codec_echoResult(uint64_t *index, int32_t *peak);
+
+/**
+ * \brief The capture layout the DSP took: channels asked for, channels
+ * captured, echo channel (-1 none).
+ *
+ * @return a text for the console.
+ */
+const char *csk6codec_echoDiag(void);
+
 #ifdef __cplusplus
 }
 #endif
