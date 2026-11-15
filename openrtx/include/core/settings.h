@@ -81,4 +81,37 @@ static const settings_t default_settings =
     "OpenRTX",                    // Default M17 meta text
 };
 
+#ifdef CONFIG_DMR_TX
+/*
+ * DMR transmission: own ID and what a call goes to. A record of its own,
+ * apart from settings_t, so that radios without it keep their settings
+ * layout and adding it kept the saved settings.
+ */
+typedef struct
+{
+    uint32_t id;            // Own DMR ID, 24 bits, 0 = not set (no TX)
+    uint32_t tg;            // Talkgroup, or called ID of a private call
+    uint8_t  cc;            // Colour code, 0..15
+    uint8_t  slot;          // Timeslot, 1 or 2
+    uint8_t  private_call;  // 1: private (unit) call to tg, 0: group call
+    uint8_t  tx_invert;     // 1: transmitted polarity flipped from the
+                            //    radio's default
+    uint8_t  _reserved[8];  // For the repeater mode, 0 until then
+}
+__attribute__((packed)) dmrSettings_t;
+
+#define DMR_ID_MAX 16777215u  // 24 bits
+
+static const dmrSettings_t default_dmr_settings =
+{
+    0,                            // No own ID: set it before transmitting
+    9,                            // Talkgroup 9, local
+    1,                            // Colour code 1
+    1,                            // Timeslot 1
+    0,                            // Group call
+    0,                            // The radio's default polarity
+    { 0 },
+};
+#endif
+
 #endif /* SETTINGS_H */

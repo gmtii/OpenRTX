@@ -198,6 +198,26 @@ int nvm_writeSettings(const settings_t *settings);
  */
 int nvm_writeSettingsAndVfo(const settings_t *settings, const channel_t *vfo);
 
+#ifdef CONFIG_DMR_TX
+/**
+ * Read the DMR transmission settings from storage.
+ *
+ * @param settings: pointer to the dmrSettings_t data structure to be
+ * populated.
+ * @return 0 on success, -1 on failure (none stored, or not valid).
+ */
+int nvm_readDmrSettings(dmrSettings_t *settings);
+
+/**
+ * Write the DMR transmission settings to storage, if they changed.
+ *
+ * @param settings: pointer to the dmrSettings_t data structure to be
+ * written.
+ * @return 0 on success, -1 on failure
+ */
+int nvm_writeDmrSettings(const dmrSettings_t *settings);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

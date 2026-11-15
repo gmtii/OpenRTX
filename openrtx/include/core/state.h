@@ -44,6 +44,9 @@ typedef struct {
 
     bool emergency;
     settings_t settings;
+#ifdef CONFIG_DMR_TX
+    dmrSettings_t dmr_settings;
+#endif
     gps_t gps_data;
     bool gps_set_time;
     bool gpsDetected;

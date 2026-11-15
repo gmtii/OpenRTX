@@ -45,6 +45,11 @@ void state_init()
         state.channel = cps_getDefaultChannel();
     }
 
+#ifdef CONFIG_DMR_TX
+    if (nvm_readDmrSettings(&state.dmr_settings) < 0)
+        state.dmr_settings = default_dmr_settings;
+#endif
+
 /*
      * Initialise remaining fields
      */
@@ -77,6 +82,9 @@ void state_terminate()
     }
 
     nvm_writeSettingsAndVfo(&state.settings, &state.channel);
+#ifdef CONFIG_DMR_TX
+    nvm_writeDmrSettings(&state.dmr_settings);
+#endif
     pthread_mutex_destroy(&state_mutex);
 }
 
@@ -131,4 +139,7 @@ void state_resetSettingsAndVfo()
 {
     state.settings = default_settings;
     state.channel = cps_getDefaultChannel();
+#ifdef CONFIG_DMR_TX
+    state.dmr_settings = default_dmr_settings;
+#endif
 }
