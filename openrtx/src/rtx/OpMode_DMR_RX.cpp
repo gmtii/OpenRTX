@@ -79,6 +79,128 @@ static bool txNoIdWarned;
 static uint8_t txBurst[DMR_TX_BURST_DIBITS];
 static int64_t txBurstSym = -1; /* Stream symbol of txBurst's first */
 static int64_t txNextSym = -1;  /* Of the next burst, -1 none */
+
+/* C62 audio driver (csk6_codec.h) */
+extern "C" {
+bool csk6codec_rtxInputBoundary(int half, uint64_t *index);
+bool csk6codec_captureTime(uint64_t index, int64_t *us);
+bool csk6codec_rtxOutputTime(uint32_t sample, int64_t *us);
+uint32_t csk6codec_playLatencyMs(void);
+}
+
+/*
+ * Repeater timing, from reception, for transmitting in its timeslots: the
+ * capture sample (csk6_codec's 48 kHz count) at the centre of symbol 0 of
+ * its TS1 bursts; TS2 ones count 30 ms earlier. A burst more than 5 ms off
+ * the reference is from the other slot (CACH misread) and dropped. The
+ * reference is also kept as a time: the capture stops and restarts around
+ * a transmission, and its count does not include the gap.
+ */
+#define FRAME_SAMPLES (2 * HALF_SAMPLES) /* 60 ms */
+#define RPT_SLOT_TOL 240                 /* 5 ms */
+#define RPT_STALE_MS 2000                /* Heard this recently */
+#define RPT_LOG_MS 5000
+static int64_t rxCapOffset; /* Capture sample minus demodulator sample */
+static bool rxMapOk;
+static uint32_t rptSeq[2];
+static uint64_t rptTs1Cap;
+static bool rptTs1Ok;
+static int64_t rptTs1Us;
+static long long rptTs1Ms; /* When the reference was last confirmed */
+static uint32_t rptAccepted, rptRejected;
+/* A run of TS1 bursts in step, for the repeater's period */
+static uint64_t rptRunFirst, rptRunLast;
+static long long rptRunLastMs;
+static bool rptRun;
+static long long rptNextLog;
+
+static void rptPeriod(uint64_t cap)
+{
+    const long long now = getTick();
+    if (!rptRun || (now - rptRunLastMs > RPT_STALE_MS) || (cap <= rptRunLast)) {
+        rptRunFirst = rptRunLast = cap;
+        rptRun = true;
+    } else {
+        rptRunLast = cap;
+    }
+    rptRunLastMs = now;
+}
+
+/* The repeater's 60 ms frame against 2880 capture samples, ppm */
+static bool rptPpm(int32_t *ppm, uint32_t *frames)
+{
+    if (!rptRun)
+        return false;
+    const uint64_t span = rptRunLast - rptRunFirst;
+    const uint32_t k = (uint32_t)((span + FRAME_SAMPLES / 2) / FRAME_SAMPLES);
+    if (k < 50)
+        return false;
+    *ppm = (int32_t)(((int64_t)span - (int64_t)k * FRAME_SAMPLES) * 1000000
+                     / ((int64_t)k * FRAME_SAMPLES));
+    *frames = k;
+    return true;
+}
+
+/* A new channel, or the demodulator reset: forget the repeater */
+static void rptReset(void)
+{
+    rptSeq[0] = rptSeq[1] = 0;
+    rptTs1Ok = false;
+    rptRun = false;
+    rptAccepted = rptRejected = 0;
+}
+
+/* The repeater bursts the demodulator found since the last block */
+static void rptTiming(void)
+{
+    if (!rxMapOk)
+        return;
+    const long long now = getTick();
+    for (int slot = 0; slot < 2; slot++) {
+        uint32_t sample, seq;
+        if (!dmr_demod_slot_start(slot, &sample, &seq) || (seq == rptSeq[slot]))
+            continue;
+        rptSeq[slot] = seq;
+        const int64_t cap = (int64_t)sample + rxCapOffset;
+        const uint64_t ts1 = (uint64_t)(cap - (slot ? FRAME_SAMPLES / 2 : 0));
+        if (!rptTs1Ok || (now - rptTs1Ms > RPT_STALE_MS)) {
+            rptTs1Ok = true; /* A new reference */
+        } else {
+            int64_t d = ((int64_t)ts1 - (int64_t)rptTs1Cap) % FRAME_SAMPLES;
+            if (d > FRAME_SAMPLES / 2)
+                d -= FRAME_SAMPLES;
+            if (d < -FRAME_SAMPLES / 2)
+                d += FRAME_SAMPLES;
+            if ((d < -RPT_SLOT_TOL) || (d > RPT_SLOT_TOL)) {
+                rptRejected++;
+                continue;
+            }
+            if (slot == 0)
+                rptPeriod(ts1);
+        }
+        rptTs1Cap = ts1;
+        rptAccepted++;
+        rptTs1Ms = now;
+        csk6codec_captureTime(rptTs1Cap, &rptTs1Us);
+    }
+
+    if (now < rptNextLog)
+        return;
+    rptNextLog = now + RPT_LOG_MS;
+    if ((rptAccepted == 0) && (rptRejected == 0))
+        return;
+    int32_t ppm = 0;
+    uint32_t frames = 0;
+    const bool havePpm = rptPpm(&ppm, &frames);
+    const uint32_t us = (uint32_t)((rptTs1Cap % FRAME_SAMPLES) * 125u / 6u);
+    printk("[DMR RPT] TS1 at %lu.%03lu ms of the 60 ms cycle (%lu bursts, "
+           "%lu of the other slot dropped), period %+ld ppm (%lu frames), "
+           "uptime %lld us\n", (unsigned long)(us / 1000),
+           (unsigned long)(us % 1000), (unsigned long)rptAccepted,
+           (unsigned long)rptRejected, (long)(havePpm ? ppm : 0),
+           (unsigned long)frames, (long long)rptTs1Us);
+    rptAccepted = rptRejected = 0;
+}
 #endif
 
 /**
@@ -265,6 +387,9 @@ OpMode_DMR_RX::~OpMode_DMR_RX()
 void OpMode_DMR_RX::enable()
 {
     dmr_demod_init();
+#ifdef CONFIG_DMR_TX
+    rptReset();
+#endif
     dmr_proto_set_printer(printLine);
     dmrSpeech_start();
     startRx = true;
@@ -349,8 +474,12 @@ void OpMode_DMR_RX::update(rtxStatus_t *const rtx, const bool newCfg)
     }
 
     /* A new frequency is a new channel: start from scratch */
-    if (newCfg)
+    if (newCfg) {
         dmr_demod_reset();
+#ifdef CONFIG_DMR_TX
+        rptReset();
+#endif
+    }
 
     if (audioPath_getStatus(basebandPath) != PATH_OPEN) {
         sleepFor(0, 10);
@@ -378,7 +507,21 @@ void OpMode_DMR_RX::update(rtxStatus_t *const rtx, const bool newCfg)
         n = HALF_SAMPLES;
     for (size_t i = 0; i < n; i++)
         samples[i] = (float)block.data[i];
+#ifdef CONFIG_DMR_TX
+    /* This block ends at the driver's last boundary of its half */
+    {
+        uint64_t boundary;
+        const int half = (block.data == baseband) ? 0 : 1;
+        if (csk6codec_rtxInputBoundary(half, &boundary) && (boundary >= n)) {
+            rxCapOffset = (int64_t)(boundary - n) - (int64_t)dmr_demod_fed();
+            rxMapOk = true;
+        }
+    }
+#endif
     dmr_demod_feed_disc(samples, (int)n);
+#ifdef CONFIG_DMR_TX
+    rptTiming();
+#endif
 
     dmr_demod_status_t ds;
     dmr_demod_get_status(&ds);
