@@ -114,6 +114,10 @@ static bool txLatOk;
 static int64_t txLatUs; /* Half written to leaving, estimated */
 
 static uint64_t txEchoArmIdx; /* Capture sample when the search began */
+/* The capture's pace during the transmission: its count and the time when
+ * the transmission started */
+static uint64_t txCapStart;
+static int64_t txCapStartUs;
 
 static int64_t uptimeUs(void)
 {
@@ -358,6 +362,16 @@ void OpMode_DMR_RX::txEnd(rtxStatus_t *rtx)
         txLogf("[DMR TX] DAC echo: not found (peak %ld)\n",
                (long)txEchoPeak);
     }
+    /* Samples the capture counted against the time that passed: 48 kHz if
+     * it kept up (the microphone and the radio input share it) */
+    {
+        const uint64_t c = csk6codec_captureCount() - txCapStart;
+        const int64_t us = uptimeUs() - txCapStartUs;
+        if (us > 0)
+            txLogf("[DMR TX] capture: %llu samples in %lld ms, %lld "
+                   "samples/s\n", (unsigned long long)c,
+                   (long long)(us / 1000), (long long)(c * 1000000 / us));
+    }
     txLogAt = getTick() + TX_LOG_DELAY_MS;
     txEchoArmed = false;
 
@@ -390,6 +404,8 @@ void OpMode_DMR_RX::txUpdate(rtxStatus_t *rtx)
         }
         /* The probe's echo: armed before the stream starts */
         txEchoArmIdx = csk6codec_captureCount();
+        txCapStart = txEchoArmIdx;
+        txCapStartUs = uptimeUs();
         txEchoArmed = csk6codec_echoArm(ECHO_WINDOW);
         txEchoDone = false;
         txEchoPeak = -1;
