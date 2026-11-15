@@ -82,6 +82,12 @@ option(C62_DMR "DMR receive mode" ON)
 #   on when it is there.
 set(C62_DMR_VOICE AUTO CACHE STRING
     "DMR speech with mbelib: AUTO (if fetched), ON, OFF")
+# C62_DMR_ENC: AMBE+2 encoder for DMR transmission, OpenDMR. Not fetched by
+#   default either (same patents): scripts/c62/fetch_opendmr.sh puts it in
+#   modules/lib/opendmr, and build.sh patches it. Needs the DMR voice, whose
+#   mbelib it uses. AUTO (default): on when it is there.
+set(C62_DMR_ENC AUTO CACHE STRING
+    "DMR AMBE+2 encoder with OpenDMR: AUTO (if fetched), ON, OFF")
 # C62_AM: AM receive mode ("AM" under key 5, after DMR), with the BK4819 AM
 #   detector, and VHF reception down to 108 MHz for the air band.
 option(C62_AM "AM receive mode and air band" ON)
@@ -230,7 +236,70 @@ if(C62_DMR)
     target_link_libraries(app PRIVATE mbelib)
     target_compile_definitions(app PRIVATE DMR_VOICE_ENABLED)
   endif()
-  set(c62_dmr_status "ON (voice ${c62_dmr_voice})")
+
+  # AUTO: with OpenDMR there, and the DMR voice it needs
+  set(C62_OPENDMR ${WEST_TOPDIR}/modules/lib/opendmr)
+  if(C62_DMR_ENC STREQUAL "AUTO")
+    if(c62_dmr_voice AND EXISTS ${C62_OPENDMR}/encoder/mbeenc.cpp)
+      set(c62_dmr_enc ON)
+    else()
+      set(c62_dmr_enc OFF)
+    endif()
+  else()
+    set(c62_dmr_enc ${C62_DMR_ENC})
+  endif()
+  if(c62_dmr_enc AND NOT c62_dmr_voice)
+    message(FATAL_ERROR "C62_DMR_ENC needs the DMR voice (C62_DMR_VOICE)")
+  endif()
+  if(c62_dmr_enc)
+    if(NOT EXISTS ${C62_OPENDMR}/encoder/mbeenc.cpp)
+      message(FATAL_ERROR "C62_DMR_ENC needs OpenDMR in ${C62_OPENDMR}: run "
+                          "scripts/c62/fetch_opendmr.sh")
+    endif()
+    # OpenDMR's encoder against the mbelib above, whose decoder state its
+    # quantisation predicts from; its analysis state in SRAM
+    # (opendmr/imbe_vocoder_c62.cpp in place of its imbe_vocoder.cc). The
+    # basic operators are inline after build.sh's patch: no basicop2.cc.
+    # An object library: nothing references its thread, which a static one
+    # would leave out.
+    set(c62_opendmr_enc ${C62_OPENDMR}/encoder)
+    add_library(opendmr_enc OBJECT
+      ${c62_opendmr_enc}/aux_sub.cc
+      ${c62_opendmr_enc}/ch_encode.cc
+      ${c62_opendmr_enc}/dc_rmv.cc
+      ${c62_opendmr_enc}/dsp_sub.cc
+      ${c62_opendmr_enc}/encode.cc
+      ${c62_opendmr_enc}/imbe_vocoder_impl.cc
+      ${c62_opendmr_enc}/math_sub.cc
+      ${c62_opendmr_enc}/pe_lpf.cc
+      ${c62_opendmr_enc}/pitch_est.cc
+      ${c62_opendmr_enc}/pitch_ref.cc
+      ${c62_opendmr_enc}/qnt_sub.cc
+      ${c62_opendmr_enc}/rand_gen.cc
+      ${c62_opendmr_enc}/sa_encode.cc
+      ${c62_opendmr_enc}/tbls.cc
+      ${c62_opendmr_enc}/v_uv_det.cc
+      ${c62_opendmr_enc}/cgolay24128.cpp
+      ${c62_opendmr_enc}/mbeenc.cpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/opendmr/imbe_vocoder_c62.cpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/opendmr/dmr_tx_enc.cpp)
+    target_link_libraries(opendmr_enc PRIVATE zephyr_interface)
+    # opendmr/mbelib.h (extern "C") ahead of mbelib's own; OpenRTX's headers
+    # for the microphone stream, hwconfig.h for its gain
+    target_include_directories(opendmr_enc BEFORE PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/opendmr ${c62_opendmr_enc} ${C62_MBELIB}
+      ${OPENRTX_ROOT}/openrtx/include ${OPENRTX_ROOT}/platform
+      ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_options(opendmr_enc PRIVATE -w -O2
+      -fsingle-precision-constant -fno-math-errno)
+    # M_PI: strict C++14 hides it in newlib's math.h
+    target_compile_definitions(opendmr_enc PRIVATE
+      M_PI=3.14159265358979323846 PLATFORM_C62)
+    target_link_libraries(app PRIVATE opendmr_enc)
+  else()
+    set(c62_dmr_enc OFF)
+  endif()
+  set(c62_dmr_status "ON (voice ${c62_dmr_voice}, encoder ${c62_dmr_enc})")
 else()
   set(c62_dmr_status OFF)
 endif()
