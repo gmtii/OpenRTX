@@ -113,6 +113,9 @@ extern void _ui_drawSettingsTimeDateSet(ui_state_t* ui_state);
 #endif
 extern void _ui_drawSettingsDisplay(ui_state_t* ui_state);
 extern void _ui_drawSettingsM17(ui_state_t* ui_state);
+#ifdef CONFIG_DMR_TX
+extern void _ui_drawSettingsDmr(ui_state_t* ui_state);
+#endif
 extern void _ui_drawSettingsFM(ui_state_t* ui_state);
 extern void _ui_drawSettingsVoicePrompts(ui_state_t* ui_state);
 extern void _ui_drawSettingsReset2Defaults(ui_state_t* ui_state);
@@ -159,6 +162,9 @@ const char *settings_items[] =
 #ifdef CONFIG_M17
     "M17",
 #endif
+#ifdef CONFIG_DMR_TX
+    "DMR",
+#endif
     "FM",
     "Accessibility",
     "Default Settings"
@@ -201,6 +207,18 @@ const char * settings_m17_items[] =
     "CAN",
     "CAN RX Check"
 };
+
+#ifdef CONFIG_DMR_TX
+const char *settings_dmr_items[] =
+{
+    "DMR ID",
+    "TG/ID",
+    "Call",
+    "CC",
+    "Slot",
+    "TX Polarity"
+};
+#endif
 
 const char* settings_fm_items[] =
 {
@@ -291,6 +309,9 @@ const uint8_t settings_gps_num = sizeof(settings_gps_items)/sizeof(settings_gps_
 const uint8_t settings_radio_num = sizeof(settings_radio_items)/sizeof(settings_radio_items[0]);
 #ifdef CONFIG_M17
 const uint8_t settings_m17_num = sizeof(settings_m17_items)/sizeof(settings_m17_items[0]);
+#endif
+#ifdef CONFIG_DMR_TX
+const uint8_t settings_dmr_num = sizeof(settings_dmr_items)/sizeof(settings_dmr_items[0]);
 #endif
 const uint8_t settings_fm_num = sizeof(settings_fm_items) / sizeof(settings_fm_items[0]);
 const uint8_t settings_accessibility_num = sizeof(settings_accessibility_items)/sizeof(settings_accessibility_items[0]);
@@ -2197,6 +2218,92 @@ static void _ui_numberInputDel(uint32_t *num)
     ui_state.input_set = 0;
 }
 
+#ifdef CONFIG_DMR_TX
+/**
+ * DMR settings screen. ENTER edits the entry picked: the DMR ID and the
+ * talkgroup are typed with the digits, UP deletes the last one, ENTER
+ * applies a number that is not 0; the others change with UP/DOWN and
+ * ENTER keeps them. ESC leaves an entry, then the screen.
+ */
+static void _ui_fsm_dmrSettings(kbd_msg_t msg)
+{
+    dmrSettings_t *dmr = &state.dmr_settings;
+    bool numeric = (ui_state.menu_selected == DMR_S_ID)
+                   || (ui_state.menu_selected == DMR_S_DST);
+
+    if(!ui_state.edit_mode)
+    {
+        if(msg.keys & KEY_UP || msg.keys & KNOB_LEFT)
+            _ui_menuUp(settings_dmr_num);
+        else if(msg.keys & KEY_DOWN || msg.keys & KNOB_RIGHT)
+            _ui_menuDown(settings_dmr_num);
+        else if(msg.keys & KEY_ENTER)
+        {
+            ui_state.edit_mode = true;
+            ui_state.new_dmr_number = 0;
+        }
+        else if(msg.keys & KEY_ESC)
+            _ui_menuBack(MENU_SETTINGS);
+        return;
+    }
+
+    if(msg.keys & KEY_ESC)
+    {
+        ui_state.edit_mode = false;
+        return;
+    }
+
+    if(numeric)
+    {
+        if(input_isNumberPressed(msg))
+        {
+            uint32_t n = ui_state.new_dmr_number * 10
+                       + input_getPressedNumber(msg);
+            if(n <= DMR_ID_MAX)
+                ui_state.new_dmr_number = n;
+        }
+        else if(msg.keys & (KEY_UP | KEY_LEFT | KNOB_LEFT))
+            ui_state.new_dmr_number /= 10;
+        else if((msg.keys & KEY_ENTER) && (ui_state.new_dmr_number > 0))
+        {
+            if(ui_state.menu_selected == DMR_S_ID)
+                dmr->id = ui_state.new_dmr_number;
+            else
+                dmr->tg = ui_state.new_dmr_number;
+            ui_state.edit_mode = false;
+        }
+        return;
+    }
+
+    bool up = msg.keys & (KEY_UP | KEY_RIGHT | KNOB_RIGHT);
+    bool down = msg.keys & (KEY_DOWN | KEY_LEFT | KNOB_LEFT);
+    if(msg.keys & KEY_ENTER)
+    {
+        ui_state.edit_mode = false;
+    }
+    else if(up || down)
+    {
+        switch(ui_state.menu_selected)
+        {
+            case DMR_S_CALL:
+                dmr->private_call = !dmr->private_call;
+                break;
+            case DMR_S_CC:
+                dmr->cc = (dmr->cc + (up ? 1 : 15)) % 16;
+                break;
+            case DMR_S_SLOT:
+                dmr->slot = (dmr->slot == 1) ? 2 : 1;
+                break;
+            case DMR_S_POLARITY:
+                dmr->tx_invert = !dmr->tx_invert;
+                break;
+            default:
+                break;
+        }
+    }
+}
+#endif
+
 void ui_init()
 {
     last_event_tick = getTick();
@@ -3078,6 +3185,11 @@ void ui_updateFSM(bool *sync_rtx)
                             state.ui_screen = SETTINGS_M17;
                             break;
 #endif
+#ifdef CONFIG_DMR_TX
+                        case S_DMR:
+                            state.ui_screen = SETTINGS_DMR;
+                            break;
+#endif
                         case S_FM:
                             state.ui_screen = SETTINGS_FM;
                             break;
@@ -3414,6 +3526,12 @@ void ui_updateFSM(bool *sync_rtx)
                 else if(msg.keys & KEY_ESC)
                     _ui_menuBack(MENU_SETTINGS);
                 break;
+#ifdef CONFIG_DMR_TX
+            // DMR Settings
+            case SETTINGS_DMR:
+                _ui_fsm_dmrSettings(msg);
+                break;
+#endif
 #ifdef CONFIG_M17
             // M17 Settings
             case SETTINGS_M17:
@@ -3877,6 +3995,12 @@ bool ui_updateGUI()
         // M17 settings screen
         case SETTINGS_M17:
             _ui_drawSettingsM17(&ui_state);
+            break;
+#endif
+#ifdef CONFIG_DMR_TX
+        // DMR settings screen
+        case SETTINGS_DMR:
+            _ui_drawSettingsDmr(&ui_state);
             break;
 #endif
         // FM settings screen
