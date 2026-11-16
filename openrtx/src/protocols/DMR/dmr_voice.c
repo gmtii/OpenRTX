@@ -65,6 +65,20 @@ void dmr_voice_call_end(int slot)
 {
     (void)slot;
 }
+void dmr_voice_ambe49(const uint8_t bits[49], unsigned errs, uint32_t t_ms)
+{
+    (void)bits;
+    (void)errs;
+    (void)t_ms;
+}
+void dmr_voice_ambe49_flush(void)
+{
+}
+void dmr_voice_ambe72(const uint8_t abc[9], uint32_t t_ms)
+{
+    (void)abc;
+    (void)t_ms;
+}
 void dmr_voice_set_encrypted(int slot, bool enc)
 {
     (void)slot;
@@ -150,11 +164,23 @@ typedef struct {
     float level; /* running rms of recent error-free frames (concealment reference) */
 } vdec_t;
 
-/* One queued voice burst: its three AMBE frames, 36 dibits each */
+/*
+ * One queued voice burst: its three AMBE frames, 36 dibits each. A burst
+ * of raw frames holds instead, per frame, either the 49 data bits packed
+ * MSB first in bytes 0-6 and the corrected bit count in byte 7
+ * (RAW_AMBE49), or the 72 channel bits a, b, c packed MSB first in bytes
+ * 0-8 (NXDN, RAW_AMBE72); it may hold fewer than three frames (the end of
+ * a transmission).
+ */
+enum { RAW_NONE = 0, RAW_AMBE49 = 1, RAW_AMBE72 = 2 };
+
 typedef struct {
     uint8_t frames[3][36];
     uint8_t slot;
-    bool new_call; /* reset the slot's vocoder state first */
+    bool new_call;    /* reset the slot's vocoder state first */
+    uint8_t raw;      /* RAW_NONE: DMR dibits, else the packed format */
+    uint8_t count;    /* frames held, raw bursts only */
+    uint8_t kinds[3]; /* per frame format of a raw burst */
 } vburst_t;
 
 #define QUEUE_BURSTS 12     /* 720 ms */
@@ -217,8 +243,11 @@ static void dec_init(int slot)
                      &s_dec[slot].prev_enh);
 }
 
+static void raw_reset(void);
+
 void dmr_voice_reset(void)
 {
+    raw_reset();
     memset(s_call, 0, sizeof(s_call));
     s_playing = -1;
     DMR_LOCK(s_q_lock);
@@ -249,25 +278,50 @@ int dmr_voice_queued(void)
     return n;
 }
 
-static void decode_frame(int slot, const uint8_t *dib)
+static void decode_frame(int slot, const uint8_t *dib, uint8_t kind)
 {
     char ambe_fr[4][24], ambe_d[49], err_str[64];
     float pcm[160];
     int errs = 0, errs2 = 0;
     vdec_t *v = &s_dec[slot];
 
-    memset(ambe_fr, 0, sizeof(ambe_fr));
-    for (int i = 0; i < 36; i++) {
-        ambe_fr[rW[i]][rX[i]] = (char)((dib[i] >> 1) & 1u);
-        ambe_fr[rY[i]][rZ[i]] = (char)(dib[i] & 1u);
+    if (kind == RAW_AMBE49) {
+        for (int i = 0; i < 49; i++)
+            ambe_d[i] = (char)((dib[i / 8] >> (7 - i % 8)) & 1u);
+        /* Bounded: mbelib writes one character per error into err_str */
+        errs2 = dib[7] > 8 ? 8 : dib[7];
+    } else if (kind == RAW_AMBE72) {
+        /* a: C0 bits 23..0, b: C1 bits 22..0, c: C2 bits 10..0 then C3
+         * bits 13..0, as mbelib's ECC and demodulation read them */
+        unsigned n = 0;
+        memset(ambe_fr, 0, sizeof(ambe_fr));
+        for (int j = 23; j >= 0; j--, n++)
+            ambe_fr[0][j] = (char)((dib[n / 8] >> (7 - n % 8)) & 1u);
+        for (int j = 22; j >= 0; j--, n++)
+            ambe_fr[1][j] = (char)((dib[n / 8] >> (7 - n % 8)) & 1u);
+        for (int j = 10; j >= 0; j--, n++)
+            ambe_fr[2][j] = (char)((dib[n / 8] >> (7 - n % 8)) & 1u);
+        for (int j = 13; j >= 0; j--, n++)
+            ambe_fr[3][j] = (char)((dib[n / 8] >> (7 - n % 8)) & 1u);
+    } else {
+        memset(ambe_fr, 0, sizeof(ambe_fr));
+        for (int i = 0; i < 36; i++) {
+            ambe_fr[rW[i]][rX[i]] = (char)((dib[i] >> 1) & 1u);
+            ambe_fr[rY[i]][rZ[i]] = (char)(dib[i] & 1u);
+        }
     }
     err_str[0] = '\0';
     {
         uint32_t t0 = dmr_port_cycles();
         uint32_t us;
-        mbe_processAmbe3600x2450Framef(pcm, &errs, &errs2, err_str, ambe_fr,
-                                       ambe_d, &v->cur, &v->prev, &v->prev_enh,
-                                       DMR_VOICE_UVQUALITY);
+        if (kind == RAW_AMBE49)
+            mbe_processAmbe2450Dataf(pcm, &errs, &errs2, err_str, ambe_d,
+                                     &v->cur, &v->prev, &v->prev_enh,
+                                     DMR_VOICE_UVQUALITY);
+        else
+            mbe_processAmbe3600x2450Framef(pcm, &errs, &errs2, err_str,
+                                           ambe_fr, ambe_d, &v->cur, &v->prev,
+                                           &v->prev_enh, DMR_VOICE_UVQUALITY);
         us = dmr_port_cycles_to_us(dmr_port_cycles() - t0);
         s_frame_us_total += us;
         if (us > s_frame_us_max) {
@@ -335,10 +389,85 @@ bool dmr_voice_decode_next(void)
     if (b.new_call) {
         dec_init(b.slot); /* new call on this slot: fresh vocoder state */
     }
-    for (int i = 0; i < 3; i++) {
-        decode_frame(b.slot, b.frames[i]);
+    for (int i = 0; i < (b.raw ? b.count : 3); i++) {
+        decode_frame(b.slot, b.frames[i], b.raw ? b.kinds[i] : RAW_NONE);
     }
     return true;
+}
+
+/* Queue a burst, dropping the oldest when the vocoder is not keeping up */
+static void queue_push(const vburst_t *src)
+{
+    DMR_LOCK(s_q_lock);
+    if (s_q_count == QUEUE_BURSTS) {
+        s_q_head = (s_q_head + 1) % QUEUE_BURSTS;
+        s_q_count--;
+        s_queue_drops++;
+    }
+    s_queue[(s_q_head + s_q_count) % QUEUE_BURSTS] = *src;
+    s_q_count++;
+    DMR_UNLOCK(s_q_lock);
+}
+
+/* Raw frames (NXDN, System Fusion) gathered three per burst, receiver
+ * side */
+static vburst_t s_raw;
+static uint32_t s_raw_last_ms;
+static bool s_raw_started;
+
+static void raw_reset(void)
+{
+    memset(&s_raw, 0, sizeof(s_raw));
+    s_raw_started = false;
+}
+
+void dmr_voice_ambe49_flush(void)
+{
+    if (s_raw.count == 0)
+        return;
+    queue_push(&s_raw);
+    s_raw.count = 0;
+    s_raw.new_call = false;
+}
+
+/* Room for the next raw frame; a gap starts a new call */
+static uint8_t *raw_next(uint8_t kind, uint32_t t_ms)
+{
+    if (!s_raw_started || (t_ms - s_raw_last_ms) > VOICE_TIMEOUT_MS) {
+        dmr_voice_ambe49_flush();
+        s_raw.new_call = true;
+    }
+    s_raw_started = true;
+    s_raw_last_ms = t_ms;
+    s_raw.slot = 0;
+    s_raw.raw = kind;
+    s_raw.kinds[s_raw.count] = kind;
+    uint8_t *f = s_raw.frames[s_raw.count];
+    memset(f, 0, 9);
+    return f;
+}
+
+static void raw_done(void)
+{
+    if (++s_raw.count == 3)
+        dmr_voice_ambe49_flush();
+}
+
+void dmr_voice_ambe49(const uint8_t bits[49], unsigned errs, uint32_t t_ms)
+{
+    uint8_t *f = raw_next(RAW_AMBE49, t_ms);
+    for (int i = 0; i < 49; i++)
+        if (bits[i])
+            f[i / 8] |= (uint8_t)(0x80u >> (i % 8));
+    f[7] = (uint8_t)(errs > 255 ? 255 : errs);
+    raw_done();
+}
+
+void dmr_voice_ambe72(const uint8_t abc[9], uint32_t t_ms)
+{
+    uint8_t *f = raw_next(RAW_AMBE72, t_ms);
+    memcpy(f, abc, 9);
+    raw_done();
 }
 
 void dmr_voice_burst(int slot, const uint8_t burst[132], int voice_idx,
@@ -383,6 +512,8 @@ void dmr_voice_burst(int slot, const uint8_t burst[132], int voice_idx,
     memcpy(b->frames[2], &burst[96], 36);
     b->slot = (uint8_t)slot;
     b->new_call = new_call;
+    b->raw = RAW_NONE;
+    b->count = 3;
     s_q_count++;
     DMR_UNLOCK(s_q_lock);
 }

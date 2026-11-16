@@ -75,6 +75,36 @@ int dmr_voice_queued(void);
  * was full (the vocoder fell behind). */
 void dmr_voice_get_debug(uint32_t *max_us, uint32_t *queue_drops);
 
+/**
+ * Queue one 20 ms AMBE+2 frame given as its 49 data bits, FEC already
+ * removed (System Fusion V/D mode 2). Played by the same speech thread as
+ * DMR; frames are grouped three per queued burst.
+ *
+ * @param bits: 49 bits, one per byte, in mbelib's ambe_d order.
+ * @param errs: bits corrected by the caller's FEC, for the vocoder's
+ * repeat-or-mute decision.
+ * @param t_ms: arrival time, ms; a gap of more than 500 ms starts a new
+ * call with a fresh vocoder state.
+ */
+void dmr_voice_ambe49(const uint8_t bits[49], unsigned errs, uint32_t t_ms);
+
+/**
+ * Queue one 20 ms AMBE+2 frame in its 72-bit channel coding (NXDN): the
+ * Golay (24,12) word a, the scrambled Golay (23,12) word b and the 25
+ * unprotected bits c, packed MSB first in that order into 9 bytes. The
+ * vocoder corrects and descrambles it as a DMR frame. Grouped three per
+ * burst with the frames of dmr_voice_ambe49().
+ *
+ * @param abc: the 72 bits.
+ * @param t_ms: arrival time, ms, as in dmr_voice_ambe49().
+ */
+void dmr_voice_ambe72(const uint8_t abc[9], uint32_t t_ms);
+
+/**
+ * Queue the frames held back for a partial burst: end of a transmission.
+ */
+void dmr_voice_ambe49_flush(void);
+
 #ifdef __cplusplus
 }
 #endif
