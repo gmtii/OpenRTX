@@ -624,6 +624,30 @@ partition (0x2b4000, 16 kB); each carries a magic and a CRC. Saving or
 deleting erases and writes 4 kB flash sectors with interrupts off: the
 audio may stutter for a moment.
 
+### Editing the memories on the PC
+
+`scripts/c62_memories.py` reads the memory table from the radio with
+`cskburn`, shows it by pages as the radio does, and writes it back. It
+writes only the table (`0x2b4000`, 16 kB): never the calibration.
+
+```bash
+sudo apt install python3-tk        # Tk, if Python lacks it
+python3 OpenRTX/scripts/c62_memories.py
+```
+
+Pick the port and the `cskburn` program once (they are remembered), put
+the radio in burn mode (section 2) and press **Read radio**. Pick a memory
+or an empty place, edit it and press **Apply**; **Copy**, **Cut** and
+**Paste** move memories between places, the buttons **0**-**9** go to a
+page. **Write radio** writes the table (burn mode again) and verifies it.
+**Open .bin** / **Save .bin** keep tables on the PC, and each table read
+from the radio is also kept in `~/.local/share/c62-memories/`, by date.
+
+Names are plain ASCII and the radio shows their first 16 characters; an
+empty name gets the radio's own (`FM 145.5000`). The tool knows the
+channel layout of this firmware: a table from a firmware whose channel
+differs in size is refused. `--list FILE` prints a table without a window.
+
 ## 12. Flashlight
 
 **MONI + \*** turns the white flashlight LED on and off.
