@@ -1718,12 +1718,22 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
         return true;
     }
 
-    // Groups page: ENTER filters the group picked, or clears its filter
+    // Groups page: ENTER filters the group picked, or clears its filter;
+    // # excludes it, or takes it back
     if((ui_state.tetra_page == TETRA_PAGE_GROUPS) && (msg.keys & KEY_ENTER))
     {
         uint32_t gssi = _ui_tetraGroupAt(ui_state.tetra_sds_sel);
         if(gssi != 0)
             tetraStatus_setFilter((gssi == tetraStatus_filter()) ? 0 : gssi);
+        return true;
+    }
+    if((ui_state.tetra_page == TETRA_PAGE_GROUPS) && (msg.keys & KEY_HASH))
+    {
+        uint32_t gssi = _ui_tetraGroupAt(ui_state.tetra_sds_sel);
+        if(gssi != 0)
+            vp_beep(tetraStatus_toggleExcluded(gssi) ? BEEP_FUNCTION_LATCH_ON
+                                                     : BEEP_FUNCTION_LATCH_OFF,
+                    LONG_BEEP);
         return true;
     }
 

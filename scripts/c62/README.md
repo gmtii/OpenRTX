@@ -260,7 +260,12 @@ bar, `3/8`), **0** back to the main one:
   picked group: only its clear calls are played, the others count as
   `Filtered` on the call card and in the debug page (`flt`). The filtered
   group is drawn green and marked `F` in the top bar; ENTER on it again
-  removes the filter.
+  removes the filter. **#** excludes the picked group instead, up to 8:
+  its calls are shown (`Filtered` on the call card) but neither played
+  nor followed to another carrier. An excluded group is listed as `X`
+  in grey, on the calls page too, and the top bar shows `X`; **#** on it
+  again takes it back. The filter and the exclusions work together, are
+  kept across frequencies, and are lost on power off.
 - **Radios** (4): the radios heard (callers, talkers, SDS senders,
   registrations), most recent first, with their last group and age;
   under the list, the picked radio's last activity, its calls and SDS,
