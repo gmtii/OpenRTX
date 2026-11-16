@@ -76,6 +76,29 @@ struct knownCall {
 /* Group whose calls only are played, 0 for all; under statusMutex */
 static uint32_t filterGssi;
 
+/* Groups whose calls are never played; under statusMutex */
+static uint32_t excluded[TETRA_EXCLUDED_MAX];
+static int nExcluded;
+
+/* Under statusMutex */
+static int findExcluded(uint32_t gssi)
+{
+    for (int i = 0; i < nExcluded; i++) {
+        if (excluded[i] == gssi)
+            return i;
+    }
+    return -1;
+}
+
+/* Under statusMutex: whether a clear call to a group or unit is left out,
+ * by the group filter or the exclusions */
+static bool leftOut(uint32_t dst, bool group)
+{
+    if (filterGssi != 0 && (!group || dst != filterGssi))
+        return true;
+    return group && findExcluded(dst) >= 0;
+}
+
 static struct knownCall calls[MAX_CALLS]; /* Under statusMutex */
 
 /*
@@ -238,8 +261,9 @@ static void followCall(const struct tetra_call *c)
     /* Another call is being played here: stay with it (see lockTn) */
     if (lockHeld(getTick()))
         return;
-    /* With a group filter, only that group's calls */
-    if (filterGssi != 0 && (!c->group || c->dst_ssi != filterGssi))
+    /* With a group filter, only that group's calls; never an excluded
+     * group's */
+    if (leftOut(c->dst_ssi, c->group))
         return;
 
     struct tetraCellInfo cell;
@@ -427,8 +451,11 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
         uint32_t dst;
         pthread_mutex_lock(&statusMutex);
         call = matchTraffic(&ev->u.traffic, &dst);
-        /* A group filter set: only that group's calls are played */
-        if (call == TETRA_TRAFFIC_CLEAR && filterGssi != 0 && dst != filterGssi)
+        /* A group filter set: only that group's calls are played; an
+         * excluded group's never are */
+        if (call == TETRA_TRAFFIC_CLEAR
+            && ((filterGssi != 0 && dst != filterGssi)
+                || (dst != 0 && findExcluded(dst) >= 0)))
             call = TETRA_TRAFFIC_FILTERED;
         /* One clear call at a time, see lockTn */
         if (call == TETRA_TRAFFIC_CLEAR) {
@@ -620,4 +647,35 @@ uint32_t tetraStatus_filter(void)
     uint32_t g = filterGssi;
     pthread_mutex_unlock(&statusMutex);
     return g;
+}
+
+bool tetraStatus_toggleExcluded(uint32_t gssi)
+{
+    bool now = false;
+    pthread_mutex_lock(&statusMutex);
+    int i = findExcluded(gssi);
+    if (i >= 0) {
+        excluded[i] = excluded[--nExcluded];
+    } else if (gssi != 0 && nExcluded < TETRA_EXCLUDED_MAX) {
+        excluded[nExcluded++] = gssi;
+        now = true;
+    }
+    pthread_mutex_unlock(&statusMutex);
+    return now;
+}
+
+bool tetraStatus_excluded(uint32_t gssi)
+{
+    pthread_mutex_lock(&statusMutex);
+    bool ex = (gssi != 0) && findExcluded(gssi) >= 0;
+    pthread_mutex_unlock(&statusMutex);
+    return ex;
+}
+
+int tetraStatus_excludedCount(void)
+{
+    pthread_mutex_lock(&statusMutex);
+    int n = nExcluded;
+    pthread_mutex_unlock(&statusMutex);
+    return n;
 }

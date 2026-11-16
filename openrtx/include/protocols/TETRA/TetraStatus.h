@@ -179,6 +179,30 @@ void tetraStatus_setFilter(uint32_t gssi);
  */
 uint32_t tetraStatus_filter(void);
 
+/* Groups whose calls are never played */
+#define TETRA_EXCLUDED_MAX 8
+
+/**
+ * Exclude a group, or take it back: its calls are still shown, but neither
+ * played nor followed to another carrier, as those outside the group
+ * filter. Kept until changed, across frequencies.
+ *
+ * @param gssi: the group.
+ * @return true if the group is now excluded; false if it was taken back,
+ * or there is no room for another one.
+ */
+bool tetraStatus_toggleExcluded(uint32_t gssi);
+
+/**
+ * @return true if the group is excluded.
+ */
+bool tetraStatus_excluded(uint32_t gssi);
+
+/**
+ * @return number of groups excluded.
+ */
+int tetraStatus_excludedCount(void);
+
 #ifdef __cplusplus
 }
 #endif
