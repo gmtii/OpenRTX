@@ -42,6 +42,10 @@ static const color_t uplink_green = { 63, 191, 95, 255 };
 #endif
 #endif
 
+#ifdef CONFIG_NXDN
+#include "protocols/NXDN/nxdn_rx.h"
+#endif
+
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraStatus.h"
 #include "protocols/TETRA/TetraCell.h"
@@ -449,6 +453,13 @@ static bool _ui_callShown(void)
         return _ui_dmrCallSlot(&si, &ds) >= 0;
     }
 #endif
+#ifdef CONFIG_NXDN
+    if (last_state.channel.mode == OPMODE_NXDN) {
+        struct nxdnStatus ns;
+        nxdn_rx_status(&ns);
+        return ns.call;
+    }
+#endif
     return false;
 }
 
@@ -683,6 +694,26 @@ void _ui_drawModeInfo(ui_state_t* ui_state)
                       color_white, "AIS");
             break;
         #endif
+
+        #ifdef CONFIG_NXDN
+        case OPMODE_NXDN:
+        {
+            struct nxdnStatus ns;
+            nxdn_rx_status(&ns);
+            if(ns.call && ns.idsValid)
+                gfx_print(layout.line2_pos, layout.line2_font,
+                          TEXT_ALIGN_CENTER, color_white, "%u > %s%u",
+                          ns.src, ns.group ? "TG " : "", ns.dst);
+            else if(ns.sync && ns.ran != 0xff)
+                gfx_print(layout.line2_pos, layout.line2_font,
+                          TEXT_ALIGN_CENTER, color_white, "NXDN RAN %u",
+                          ns.ran);
+            else
+                gfx_print(layout.line2_pos, layout.line2_font,
+                          TEXT_ALIGN_CENTER, color_white, "NXDN");
+            break;
+        }
+        #endif
     }
 }
 
@@ -809,6 +840,9 @@ void _ui_drawMainBottom()
                            yellow_fab413);
             break;
         case OPMODE_DMR:
+        #ifdef CONFIG_NXDN
+        case OPMODE_NXDN:
+        #endif
             gfx_drawSmeterLevel(meter_pos,
                                 meter_width,
                                 meter_height,
@@ -2578,6 +2612,9 @@ static const color_t rich_teal   = {  47, 179, 196, 255 };
 static const color_t rich_violet = { 185, 163, 255, 255 };
 #ifdef CONFIG_AIS
 static const color_t ais_teal    = {  72, 208, 150, 255 };
+#ifdef CONFIG_NXDN
+static const color_t nxdn_pink   = { 240, 110, 170, 255 };
+#endif
 #endif
 
 /**
@@ -2666,6 +2703,11 @@ static color_t _ui_richModeColor(const char **name)
         case OPMODE_DMR:
             *name = "DMR";
             return rich_violet;
+        #ifdef CONFIG_NXDN
+        case OPMODE_NXDN:
+            *name = "NXDN";
+            return nxdn_pink;
+        #endif
         default:
             *name = "FM";
             return yellow_fab413;
@@ -2907,6 +2949,17 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
                                       rich_red, false);
     }
     #endif
+    #ifdef CONFIG_NXDN
+    else if(last_state.channel.mode == OPMODE_NXDN)
+    {
+        struct nxdnStatus ns;
+        nxdn_rx_status(&ns);
+        x = ns.sync ? _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "SYNC",
+                                    rich_green, true)
+                    : _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "SEARCH",
+                                    rich_red, false);
+    }
+    #endif
     #ifdef CONFIG_ACARS
     else if(last_state.channel.mode == OPMODE_ACARS)
     {
@@ -2974,6 +3027,9 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
         #endif
         #ifdef CONFIG_AIS
             || last_state.channel.mode == OPMODE_AIS
+        #endif
+        #ifdef CONFIG_NXDN
+            || last_state.channel.mode == OPMODE_NXDN
         #endif
             || last_state.channel.mode == OPMODE_DMR)
     {
@@ -3793,6 +3849,71 @@ static void _ui_richDmr(void)
 }
 #endif
 
+#ifdef CONFIG_NXDN
+/**
+ * NXDN: the channel type and RAN, the call in a card (who talks to which
+ * group or unit), else the frequency and the receiver's figures.
+ */
+static void _ui_richNxdn(void)
+{
+    static const char *const channels[4] = { "Control", "Traffic", "Conv",
+                                             "Composite" };
+    struct nxdnStatus ns;
+    nxdn_rx_status(&ns);
+    const int16_t y = RICH_INFO_Y;
+
+    _ui_richMemTag(y);
+    if(!ns.sync)
+        _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
+                      rich_grey, "Searching");
+    else if(ns.ran != 0xff)
+        _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
+                      rich_grey, "%s RAN %u", channels[ns.channel & 3u],
+                      ns.ran);
+    else
+        _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
+                      rich_grey, "%s", channels[ns.channel & 3u]);
+
+    if(ns.call)
+    {
+        char dst[16], talker[16];
+        const char *state = ns.voice ? "Voice" : "Idle";
+        color_t sc = rich_green;
+        if(ns.idsValid)
+        {
+            sniprintf(dst, sizeof(dst), "%u", ns.dst);
+            sniprintf(talker, sizeof(talker), "%u", ns.src);
+        }
+        else
+        {
+            sniprintf(dst, sizeof(dst), "?");
+            sniprintf(talker, sizeof(talker), "No ID");
+        }
+        if(ns.encrypted)
+        {
+            state = "Encrypted";
+            sc = rich_red;
+        }
+        static const color_t bg = { 48, 24, 38, 255 };
+        _ui_richCard(31, 60, bg, nxdn_pink,
+                     (ns.idsValid && !ns.group) ? "ID" : "TG", dst, talker,
+                     "", sc, state, "");
+        _ui_richMeter(93, nxdn_pink, false, false);
+        return;
+    }
+
+    _ui_richFrequency(33);
+    _ui_richPrint(RICH_PAD, 57, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                  "Frames %lu  bad %lu  lost %lu", (unsigned long)ns.frames,
+                  (unsigned long)ns.lichBad, (unsigned long)ns.overruns);
+    gfx_drawRect((point_t){ RICH_PAD, 68 }, CONFIG_SCREEN_WIDTH - 2 * RICH_PAD,
+                 17, rich_dark, false);
+    _ui_richPrint(RICH_PAD + 3, 72, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, rich_grey,
+                  "No call");
+    _ui_richMeter(89, nxdn_pink, false, false);
+}
+#endif
+
 #ifdef CONFIG_M17
 /**
  * M17: destination and CAN, the frequency, or the transmission in a card.
@@ -3864,6 +3985,11 @@ static void _ui_drawRichMain(ui_state_t *ui_state, bool mem)
         #ifdef CONFIG_DMR_RX
         case OPMODE_DMR:
             _ui_richDmr();
+            return;
+        #endif
+        #ifdef CONFIG_NXDN
+        case OPMODE_NXDN:
+            _ui_richNxdn();
             return;
         #endif
         #ifdef CONFIG_M17

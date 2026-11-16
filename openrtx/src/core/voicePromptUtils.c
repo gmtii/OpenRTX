@@ -140,6 +140,10 @@ void vp_announceRadioMode(const uint8_t mode, const enum vpQueueFlags flags)
         case OPMODE_AIS:
             vp_queueString("AIS", (enum vpFlags)0);
             break;
+
+        case OPMODE_NXDN:
+            vp_queueString("NXDN", (enum vpFlags)0);
+            break;
     }
 
     playIfNeeded(flags);

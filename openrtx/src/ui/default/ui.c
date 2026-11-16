@@ -1922,8 +1922,8 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
             }
             break;
         case 5:
-            // Cycle through radio modes: FM, M17, TETRA, DMR, AM, each one
-            // only if built in
+            // Cycle through radio modes: FM, M17, TETRA, DMR, NXDN, AM,
+            // ACARS, AIS, each one only if built in
             {
                 static const uint8_t modes[] = {
                     OPMODE_FM,
@@ -1935,6 +1935,9 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
                     #endif
                     #ifdef CONFIG_DMR_RX
                     OPMODE_DMR,
+                    #endif
+                    #ifdef CONFIG_NXDN
+                    OPMODE_NXDN,
                     #endif
                     #ifdef CONFIG_AM
                     OPMODE_AM,

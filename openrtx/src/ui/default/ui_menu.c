@@ -619,7 +619,7 @@ int _ui_getBankName(char *buf, uint8_t max_len, uint8_t index)
 const char *_ui_modeLabel(uint8_t mode)
 {
     static const char *const labels[] = { "", "FM", "DMR", "M17", "T",
-                                          "AM", "ACARS", "AIS" };
+                                          "AM", "ACARS", "AIS", "NXDN" };
     return (mode < sizeof(labels) / sizeof(labels[0])) ? labels[mode] : "";
 }
 
@@ -1517,6 +1517,11 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
 #ifdef CONFIG_AIS
         case OPMODE_AIS:
             gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          AIS");
+            break;
+#endif
+#ifdef CONFIG_NXDN
+        case OPMODE_NXDN:
+            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          NXDN");
             break;
 #endif
     }

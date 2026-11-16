@@ -56,6 +56,7 @@ docker run --rm -it --user "$(id -u):$(id -g)" \
 | `C62_DMR` | `ON` | DMR receive mode "DMR" (section 6) |
 | `C62_DMR_VOICE` | `AUTO` | DMR speech with mbelib: on when it was fetched (section 6) |
 | `C62_DMR_ENC` | `AUTO` | DMR transmission, with the OpenDMR AMBE+2 encoder: on when it was fetched and the DMR voice is on (section 6) |
+| `C62_NXDN` | `ON` | NXDN48 receive mode "NXDN", after DMR; needs `C62_DMR`, speech with the DMR voice (section 6) |
 | `C62_DAC_ECHO` | `OFF` | Capture the DSP's echo of the DAC. For experiments: in that layout the DSP captures at 16 kHz, so no mode receives (section 6) |
 | `C62_AM` | `ON` | AM receive mode "AM", for the air band (section 7) |
 | `C62_ACARS` | `ON` | ACARS receive mode "ACARS" (section 13) |
@@ -478,6 +479,22 @@ the microphone does not work with the programming cable plugged in, so
 test with speech unplugged and plug it in afterwards to read them. Set the
 port first, `cskburn` leaves it at another speed: `stty -F /dev/ttyUSB0
 115200 raw -echo -ixon`.
+
+### NXDN
+
+**NXDN** follows **DMR** under key **5**: NXDN48 (2400 baud 4FSK, 6.25 kHz
+channels), receive only. It goes through the same flat path into its own
+4FSK demodulator (`openrtx/src/protocols/NXDN/`: RRC matched filter, sync
+fitted for level, offset and polarity, Gardner timing), then the LICH,
+SACCH and FACCH1, the voice call header and the AMBE+2 speech, played by
+the DMR vocoder (mbelib, so `C62_DMR_VOICE` on). Calls that declare a
+cipher are shown and not played.
+
+The main screen shows `SYNC` or `SEARCH` in the top bar, the channel type
+(conventional, traffic, control) and the RAN, and during a call a card
+with the group (`TG`) or unit (`ID`) called and the unit talking; with
+no call, the frames decoded, those whose LICH failed and the sample
+blocks lost. A memory in NXDN holds mode 8 (`NXDN 446.0000`).
 
 ## 7. AM mode (air band)
 
