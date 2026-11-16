@@ -93,6 +93,18 @@ struct tetra_event;
 int tetraScan_begin(uint32_t servingHz);
 
 /**
+ * Begin a scan of given cells, for the roaming: as tetraScan_begin(), the
+ * scan then running as if requested.
+ *
+ * @param hz: their downlink frequencies.
+ * @param cellId: their cell identifiers, TETRA_SCAN_SERVING for a cell the
+ * radio was tuned to.
+ * @param n: number of cells, at most TETRA_SCAN_MAX.
+ * @return number of cells to visit.
+ */
+int tetraScan_beginList(const uint32_t *hz, const uint8_t *cellId, int n);
+
+/**
  * @param i: entry to visit.
  * @return its downlink frequency.
  */

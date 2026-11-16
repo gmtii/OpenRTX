@@ -118,6 +118,24 @@ int tetraScan_begin(uint32_t servingHz)
     return count;
 }
 
+int tetraScan_beginList(const uint32_t *hz, const uint8_t *cellId, int n)
+{
+    pthread_mutex_lock(&scanMutex);
+    memset(results, 0, sizeof(results));
+    count = 0;
+    for (int i = 0; i < n && count < TETRA_SCAN_MAX; i++) {
+        if (hz[i] == 0)
+            continue;
+        results[count].cellId = cellId[i];
+        results[count].dlHz = hz[i];
+        count++;
+    }
+    visiting = -1;
+    wanted = (count > 0);
+    pthread_mutex_unlock(&scanMutex);
+    return count;
+}
+
 uint32_t tetraScan_freq(int i)
 {
     pthread_mutex_lock(&scanMutex);
