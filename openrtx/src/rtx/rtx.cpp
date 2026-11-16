@@ -25,6 +25,9 @@
 #ifdef CONFIG_AIS
 #include "rtx/OpMode_AIS.hpp"
 #endif
+#ifdef CONFIG_NXDN
+#include "rtx/OpMode_NXDN.hpp"
+#endif
 #ifdef CONFIG_FM_BROADCAST
 #include "interfaces/delays.h"
 #endif
@@ -55,6 +58,9 @@ static OpMode_ACARS acarsMode;          // ACARS receive mode handler
 #endif
 #ifdef CONFIG_AIS
 static OpMode_AIS aisMode;              // AIS receive mode handler
+#endif
+#ifdef CONFIG_NXDN
+static OpMode_NXDN nxdnMode;            // NXDN48 receive mode handler
 #endif
 
 #ifdef CONFIG_SPECTRUM
@@ -469,6 +475,9 @@ void rtx_task()
                 #endif
                 #ifdef CONFIG_AIS
                 case OPMODE_AIS:  currMode = &aisMode; break;
+                #endif
+                #ifdef CONFIG_NXDN
+                case OPMODE_NXDN: currMode = &nxdnMode; break;
                 #endif
                 default:   currMode = &noMode;
             }

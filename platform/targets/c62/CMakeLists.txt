@@ -76,6 +76,9 @@ set(C62_REG43_SWEEP_MS 1400 CACHE STRING "REG_43 sweep dwell time, ms")
 # C62_DMR: DMR receive mode ("DMR" under key 5, after T), demodulated and
 #   decoded in software: colour code, talkgroup, IDs, talker alias.
 option(C62_DMR "DMR receive mode" ON)
+# C62_NXDN: NXDN48 receive mode ("NXDN" under key 5, after DMR): IDs, RAN,
+#   cipher, speech through the DMR vocoder. Needs C62_DMR.
+option(C62_NXDN "NXDN48 receive mode" ON)
 # C62_DMR_VOICE: DMR speech with mbelib (AMBE+2). mbelib is not fetched by
 #   default: the AMBE+2 algorithm is covered by patents in some countries.
 #   scripts/c62/fetch_mbelib.sh puts it in modules/lib/mbelib. AUTO (default):
@@ -311,6 +314,14 @@ if(C62_DMR)
     set(c62_dmr_enc OFF)
   endif()
   set(c62_dmr_status "ON (voice ${c62_dmr_voice}, encoder ${c62_dmr_enc})")
+
+  # NXDN48: its own demodulator and decoder, the DMR speech thread
+  if(C62_NXDN)
+    target_sources(app PRIVATE
+      ${OPENRTX_ROOT}/openrtx/src/protocols/NXDN/nxdn_rx.c
+      ${OPENRTX_ROOT}/openrtx/src/rtx/OpMode_NXDN.cpp)
+    target_compile_definitions(app PRIVATE CONFIG_NXDN)
+  endif()
 else()
   set(c62_dmr_status OFF)
 endif()
