@@ -55,6 +55,8 @@ private:
     void scanNext(rtxStatus_t *const rtx);
     void scanEnd(rtxStatus_t *const rtx);
     void scanStep(rtxStatus_t *const rtx, const dataBlock_t &block);
+    void roamBegin();
+    uint32_t roamPick();
     void uplinkBegin(rtxStatus_t *const rtx);
     void uplinkEnd(rtxStatus_t *const rtx);
     void startSampling();
@@ -67,6 +69,7 @@ private:
     unsigned reacqCount;       // Re-acquisitions within the window
     uint32_t reacqWindowStart; // Start of that window, in ms
     uint32_t tunedHz;          // Receiver frequency: configured or followed
+    uint32_t mainHz;           // The cell's: configured, or tuned by roaming
     bool following;            // On another carrier of the cell, for a call
     bool scanning;             // Site discovery in place of reception
     bool scanSync;             // The cell visited reached synchronisation
@@ -81,6 +84,12 @@ private:
     uint16_t ulMcc;            // Its cell, for the uplink scrambling
     uint16_t ulMnc;
     uint8_t ulColour;
+    bool roamScan;             // The scan running is the roaming's
+    bool roamPending;          // Roaming tuned mainHz, the UI follows it
+    bool roamWaiting;          // No cell found: scanning again later
+    long long lastSyncAt;      // Tick of the last block in synchronisation
+    long long roamCheckAt;     // Tick of the next table refresh
+    long long roamRetryAt;     // Tick of the next roaming scan
     pathId basebandPath;
     streamId basebandId;
 };

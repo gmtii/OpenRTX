@@ -14,6 +14,7 @@
 #include "interfaces/radio.h"
 #include "protocols/TETRA/TetraCell.h"
 #include "protocols/TETRA/TetraDemod.h"
+#include "protocols/TETRA/TetraRoam.h"
 #include "protocols/TETRA/TetraScan.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraStatus.h"
@@ -44,8 +45,24 @@
 #define SCAN_SYNC_MS 2500
 #define SCAN_SYSINFO_MS 1500
 #define SCAN_ERR_BLOCKS 10 /* Phase error blocks wanted before leaving */
+/*
+ * Roaming: the table is scanned once the burst synchronisation has been
+ * lost this long, after the start of reception or a cell change too; if no
+ * cell of the network is found, again ROAM_RETRY_MS later. The table
+ * follows the cell received once a second.
+ */
+#define ROAM_LOST_MS 3000
+#define ROAM_RETRY_MS 10000
+#define ROAM_REFRESH_MS 1000
 /* Uplink below the downlink when the cell gave no duplex spacing */
 #define UPLINK_SPACING_HZ 10000000
+
+#ifdef __ZEPHYR__
+#include <zephyr/sys/printk.h>
+#define ROAM_PRINT printk
+#else
+#define ROAM_PRINT printf
+#endif
 
 /* Large state: static, there is only one TETRA mode */
 static int16_t baseband[2 * HALF_SAMPLES];
@@ -66,6 +83,7 @@ OpMode_TETRA::OpMode_TETRA()
     , reacqCount(0)
     , reacqWindowStart(0)
     , tunedHz(0)
+    , mainHz(0)
     , following(false)
     , scanning(false)
     , scanSync(false)
@@ -80,6 +98,12 @@ OpMode_TETRA::OpMode_TETRA()
     , ulMcc(0)
     , ulMnc(0)
     , ulColour(0)
+    , roamScan(false)
+    , roamPending(false)
+    , roamWaiting(false)
+    , lastSyncAt(0)
+    , roamCheckAt(0)
+    , roamRetryAt(0)
     , basebandPath(-1)
     , basebandId(-1)
 {
@@ -106,12 +130,17 @@ void OpMode_TETRA::initDemod()
 void OpMode_TETRA::reset()
 {
     scanning = false;
+    roamScan = false;
+    roamPending = false;
+    roamWaiting = false;
     following = false;
     uplink = false;
     initDemod();
     settleBlocks = SETTLE_BLOCKS;
     resync(false);
     tetraStatus_reset();
+    lastSyncAt = getTick();
+    roamRetryAt = 0;
 }
 
 /*
@@ -145,7 +174,8 @@ void OpMode_TETRA::initTmo(void (*cb)(void *, const struct tetra_event *))
  */
 void OpMode_TETRA::scanBegin(rtxStatus_t *const rtx)
 {
-    scanCount = tetraScan_begin(rtx->rxFrequency);
+    (void)rtx;
+    scanCount = tetraScan_begin(mainHz);
     if (scanCount == 0) {
         tetraScan_end();
         return;
@@ -183,14 +213,88 @@ void OpMode_TETRA::scanNext(rtxStatus_t *const rtx)
 
 void OpMode_TETRA::scanEnd(rtxStatus_t *const rtx)
 {
+    (void)rtx;
     tetraScan_end();
     scanning = false;
-    radio_retuneRx(rtx->rxFrequency);
-    tunedHz = rtx->rxFrequency;
+
+    /* Roaming: the strongest cell of the network found, if any */
+    bool moved = false;
+    if (roamScan) {
+        roamScan = false;
+        const uint32_t best = roamPick();
+        const long long now = getTick();
+        roamWaiting = (best == 0);
+        roamRetryAt = roamWaiting ? now + ROAM_RETRY_MS : 0;
+        tetraRoam_setState(roamWaiting ? TETRA_ROAM_WAITING :
+                                         TETRA_ROAM_LISTENING,
+                           roamRetryAt);
+        if (best != 0 && best != mainHz) {
+            mainHz = best;
+            moved = true;
+        }
+    }
+
+    radio_retuneRx(mainHz);
+    tunedHz = mainHz;
     initDemod();
     settleBlocks = SETTLE_BLOCKS;
+    if (moved) {
+        /* A new cell: start from scratch there, the UI following it */
+        tetraStatus_reset();
+        roamPending = true;
+        tetraRoam_moved(mainHz);
+    }
     resync(false);
     tetraStatus_scanDone();
+    /* Time to synchronise before the roaming looks again */
+    lastSyncAt = getTick();
+}
+
+/*
+ * Roaming: scan the table of cells, in place of reception as the site scan
+ * does; the scan's end tunes the best cell found (see scanEnd()).
+ */
+void OpMode_TETRA::roamBegin()
+{
+    static uint32_t hz[TETRA_ROAM_MAX];
+    static uint8_t cellId[TETRA_ROAM_MAX];
+    const int n = tetraRoam_cells(hz, cellId);
+    scanCount = tetraScan_beginList(hz, cellId, n);
+    if (scanCount == 0) {
+        roamWaiting = true;
+        roamRetryAt = getTick() + ROAM_RETRY_MS;
+        tetraRoam_setState(TETRA_ROAM_WAITING, roamRetryAt);
+        return;
+    }
+    ROAM_PRINT("TETRA: roaming, scanning %d cells\n", scanCount);
+    tetraRoam_setState(TETRA_ROAM_SCANNING, 0);
+    roamScan = true;
+    scanning = true;
+    following = false;
+    platform_ledOff(GREEN);
+    scanVisit(0);
+}
+
+/*
+ * The cell to roam to: synchronised to, of the network, the strongest.
+ *
+ * @return its frequency, 0 if none.
+ */
+uint32_t OpMode_TETRA::roamPick()
+{
+    static struct tetraScanResult sr[TETRA_SCAN_MAX];
+    /* Synchronised first, then by RSSI */
+    const int n = tetraScan_results(sr, NULL);
+    for (int i = 0; i < n; i++) {
+        if (sr[i].measured && sr[i].sync && sr[i].cell
+            && tetraRoam_network(sr[i].mcc, sr[i].mnc)) {
+            ROAM_PRINT("TETRA: roaming to %lu Hz, %d dBm\n",
+                   (unsigned long)sr[i].dlHz, sr[i].rssi);
+            return sr[i].dlHz;
+        }
+    }
+    ROAM_PRINT("TETRA: roaming, no cell of the network found\n");
+    return 0;
 }
 
 void OpMode_TETRA::scanStep(rtxStatus_t *const rtx, const dataBlock_t &block)
@@ -261,7 +365,7 @@ void OpMode_TETRA::uplinkBegin(rtxStatus_t *const rtx)
     int32_t spacing = UPLINK_SPACING_HZ;
     if (c.sysinfo && c.dlHz != 0 && c.ulHz != 0)
         spacing = (int32_t)(c.dlHz - c.ulHz);
-    const uint32_t ulHz = (uint32_t)((int32_t)rtx->rxFrequency - spacing);
+    const uint32_t ulHz = (uint32_t)((int32_t)mainHz - spacing);
 
     ulMcc = c.mcc;
     ulMnc = c.mnc;
@@ -281,9 +385,10 @@ void OpMode_TETRA::uplinkBegin(rtxStatus_t *const rtx)
 
 void OpMode_TETRA::uplinkEnd(rtxStatus_t *const rtx)
 {
+    (void)rtx;
     uplink = false;
-    radio_retuneRx(rtx->rxFrequency);
-    tunedHz = rtx->rxFrequency;
+    radio_retuneRx(mainHz);
+    tunedHz = mainHz;
     tetraDemod_setBurst(&demod, false);
     tetraDemod_setHold(&demod, false);
     demodJumps = tetraDemod_reacquisitions(&demod);
@@ -306,6 +411,8 @@ void OpMode_TETRA::disable()
         scanning = false;
         tetraScan_end();
     }
+    /* Roaming is for the TETRA mode */
+    tetraRoam_stop();
     startRx = false;
     stopSampling();
     tetraSpeech_stop();
@@ -359,14 +466,21 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
         startSampling();
         radio_enableRx();
         tunedHz = rtx->rxFrequency;
+        mainHz = rtx->rxFrequency;
         startRx = false;
     }
 
     /* A new frequency is a new cell: start from scratch. The radio driver
-     * tuned the configured frequency again. */
+     * tuned the configured frequency again. Not when it is the UI following
+     * the cell roaming tuned: that one is already being received. */
     if (newCfg) {
-        reset();
-        tunedHz = rtx->rxFrequency;
+        if (roamPending && rtx->rxFrequency == mainHz && !following) {
+            roamPending = false;
+        } else {
+            reset();
+            tunedHz = rtx->rxFrequency;
+            mainHz = rtx->rxFrequency;
+        }
     }
 
     if (audioPath_getStatus(basebandPath) != PATH_OPEN) {
@@ -401,6 +515,32 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
     if (scanning) {
         scanStep(rtx, block);
         return;
+    }
+
+    /*
+     * Roaming, on the downlink: the table follows the cell received, and
+     * once the synchronisation is lost for a while the table is scanned for
+     * the best cell of the network.
+     */
+    const long long now = getTick();
+    const bool sync = tetraStatus_sync();
+    if (sync)
+        lastSyncAt = now;
+    if (!uplink && tetraRoam_on()) {
+        if (sync && now >= roamCheckAt) {
+            roamCheckAt = now + ROAM_REFRESH_MS;
+            tetraRoam_refresh(mainHz);
+            if (roamWaiting) {
+                roamWaiting = false;
+                tetraRoam_setState(TETRA_ROAM_LISTENING, 0);
+            }
+        }
+        if (!sync && !following && (now - lastSyncAt) >= ROAM_LOST_MS
+            && now >= roamRetryAt) {
+            roamBegin();
+            if (scanning)
+                return;
+        }
     }
 
     /* The uplink asked for, or the downlink back */
@@ -469,11 +609,11 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
      * timeslot, with noise in between, and a re-acquisition loses the timing
      * libtetra finds the slots by.
      */
-    const uint32_t wantHz = tetraStatus_followHz(rtx->rxFrequency);
+    const uint32_t wantHz = tetraStatus_followHz(mainHz);
     if (wantHz != tunedHz) {
         radio_retuneRx(wantHz);
         tunedHz = wantHz;
-        following = (wantHz != rtx->rxFrequency);
+        following = (wantHz != mainHz);
         tetraDemod_setHold(&demod, following);
         reacqCount = 0;
     }
