@@ -47,6 +47,7 @@ static const color_t uplink_green = { 63, 191, 95, 255 };
 #include "protocols/TETRA/TetraCell.h"
 #include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraScan.h"
+#include "protocols/TETRA/TetraRoam.h"
 #include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraDemod.h"
@@ -204,14 +205,26 @@ static void _ui_drawTetraInfo(void)
         return;
     }
 
+    // Roaming: the tower in green, the search for a cell when lost
+    struct tetraRoamInfo roam;
+    tetraRoam_get(&roam);
     if (!ts.sync) {
+        const char *what = "T searching";
+        if (roam.state == TETRA_ROAM_SCANNING)
+            what = "T roaming";
+        else if (roam.state == TETRA_ROAM_WAITING)
+            what = "T roam: no cell";
         gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
-                  color_white, "T searching");
+                  (roam.state != TETRA_ROAM_OFF) ? yellow_fab413 : color_white,
+                  "%s", what);
         return;
     }
 
+    static const color_t roamGreen = { 63, 191, 95, 255 };
     gfx_drawSymbol(layout.line2_pos, layout.line2_symbol_size,
-                   TEXT_ALIGN_LEFT, color_white, SYMBOL_TRANSMISSION_TOWER);
+                   TEXT_ALIGN_LEFT,
+                   (roam.state != TETRA_ROAM_OFF) ? roamGreen : color_white,
+                   SYMBOL_TRANSMISSION_TOWER);
     if (ts.sysinfo)
         gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
                   color_white, "T %u-%u LA %u%s", ts.mcc, ts.mnc, ts.la,
@@ -1757,6 +1770,44 @@ static void _ui_drawTetraCell(void)
 }
 
 /**
+ * TETRA neighbours page: the roaming, on a line of its own while on.
+ *
+ * @param pos: the line before, moved to the roaming's line if drawn.
+ * @param font: font of the page.
+ * @param step: line height.
+ */
+static void _ui_drawTetraRoam(point_t *pos, fontSize_t font, int16_t step)
+{
+    struct tetraRoamInfo r;
+    tetraRoam_get(&r);
+    if(r.state == TETRA_ROAM_OFF)
+        return;
+
+    static const color_t roamGreen = { 63, 191, 95, 255 };
+    pos->y += step;
+    switch(r.state)
+    {
+        case TETRA_ROAM_SCANNING:
+            gfx_print(*pos, font, TEXT_ALIGN_LEFT, yellow_fab413,
+                      "Roam %u-%u: lost, scanning", r.mcc, r.mnc);
+            break;
+        case TETRA_ROAM_WAITING:
+        {
+            long long left = (r.retryAt - getTick() + 999) / 1000;
+            gfx_print(*pos, font, TEXT_ALIGN_LEFT, yellow_fab413,
+                      "Roam %u-%u: none, again %ds", r.mcc, r.mnc,
+                      (left > 0) ? (int)left : 0);
+            break;
+        }
+        default:
+            gfx_print(*pos, font, TEXT_ALIGN_LEFT, roamGreen,
+                      "Roam %u-%u: %d cells%s", r.mcc, r.mnc, r.count,
+                      r.awaiting ? ", new cell" : "");
+            break;
+    }
+}
+
+/**
  * TETRA neighbours page, after a site scan: the cells visited, reached
  * first, then by RSSI. UP / DOWN pick one, ENTER tunes the VFO to it.
  */
@@ -1778,6 +1829,7 @@ static void _ui_drawTetraScan(ui_state_t *ui_state)
         gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "Scan %d", n);
     gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey,
               running ? "ESC stop" : "OK=tune #=redo");
+    _ui_drawTetraRoam(&pos, font, step);
 
     // The picked row stays within the list and on screen
     if(ui_state->tetra_sds_sel >= n && n > 0)
@@ -1853,8 +1905,21 @@ static void _ui_drawTetraNeighbours(ui_state_t *ui_state)
     const int16_t step = 11;
     point_t pos = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
 
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "Neighbours %d", n);
-    gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey, "# scan");
+    // The keys, shorter if they do not fit beside the title
+    char title[16];
+    sniprintf(title, sizeof(title), "Neighbours %d", n);
+    const char *keys = tetraRoam_on() ? "#=scan hold=stop"
+                                      : "#=scan hold=roam";
+    const int16_t room = CONFIG_SCREEN_WIDTH - 2 * layout.horizontal_pad;
+    if(gfx_getTextWidth(font, title) + 6 + gfx_getTextWidth(font, keys)
+       > room)
+        keys = tetraRoam_on() ? "#=scan/stop" : "#=scan/roam";
+    if(gfx_getTextWidth(font, title) + 6 + gfx_getTextWidth(font, keys)
+       > room)
+        keys = "#";
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "%s", title);
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey, "%s", keys);
+    _ui_drawTetraRoam(&pos, font, step);
     if(n == 0)
     {
         pos.y += 2 * step;
@@ -1863,7 +1928,6 @@ static void _ui_drawTetraNeighbours(ui_state_t *ui_state)
     }
 
     static const char *const load[] = { "?", "lo", "med", "hi" };
-    const int16_t room = CONFIG_SCREEN_WIDTH - 2 * layout.horizontal_pad;
     for(int i = 0; i < n && pos.y + step < CONFIG_SCREEN_HEIGHT; i++)
     {
         char left[32], right[12];
@@ -2821,6 +2885,15 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
         if(tetraStatus_filter() != 0)
             x = _ui_richBadge(x + 2, 2, 12, FONT_SIZE_6PT, "F", rich_green,
                               false);
+        // Roaming: filled while it looks for a cell
+        struct tetraRoamInfo roam;
+        tetraRoam_get(&roam);
+        if(roam.state == TETRA_ROAM_LISTENING)
+            x = _ui_richBadge(x + 2, 2, 12, FONT_SIZE_6PT, "R", rich_green,
+                              false);
+        else if(roam.state != TETRA_ROAM_OFF)
+            x = _ui_richBadge(x + 2, 2, 12, FONT_SIZE_6PT, "R", rich_orange,
+                              true);
     }
     #endif
     #ifdef CONFIG_DMR_RX

@@ -75,6 +75,7 @@
 #include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraStatus.h"
 #include "protocols/TETRA/TetraScan.h"
+#include "protocols/TETRA/TetraRoam.h"
 #include "protocols/TETRA/TetraSds.h"
 #endif
 #ifdef CONFIG_DMR_RX
@@ -1657,6 +1658,37 @@ static void _ui_tetraTuneScanned(uint8_t sel, bool *sync_rtx)
                            vp_getVoiceLevelQueueFlags());
 }
 
+/**
+ * The roaming tuned another cell: the VFO takes its frequency, keeping the
+ * TX offset, from a memory too.
+ */
+static void _ui_tetraFollowRoaming(bool *sync_rtx)
+{
+    uint32_t hz;
+    uint32_t moves = tetraRoam_moves(&hz);
+    if(moves == ui_state.tetra_roam_seen)
+        return;
+    ui_state.tetra_roam_seen = moves;
+    if((hz == 0) || (hz == state.channel.rx_frequency)
+       || !_ui_freq_check_limits(hz))
+        return;
+
+    int32_t shift = (int32_t)(state.channel.tx_frequency
+                            - state.channel.rx_frequency);
+    state.channel.rx_frequency = hz;
+    state.channel.tx_frequency = hz + shift;
+    state.vfo_channel = state.channel;
+    if(state.ui_screen == MAIN_MEM)
+        state.ui_screen = MAIN_VFO;
+    if(ui_state.last_main_state == MAIN_MEM)
+        ui_state.last_main_state = MAIN_VFO;
+    *sync_rtx = true;
+    redraw_needed = true;
+    vp_announceFrequencies(state.channel.rx_frequency,
+                           state.channel.tx_frequency,
+                           vp_getVoiceLevelQueueFlags());
+}
+
 static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
 {
     if(state.channel.mode != OPMODE_TETRA)
@@ -1702,12 +1734,31 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
         return true;
     }
 
-    // Neighbours page: # scans the serving cell and the neighbours; ESC
-    // stops the scan, then goes back to the cells announced
+    // Neighbours page: # scans the serving cell and the neighbours, on its
+    // release; held, it starts or stops the roaming. ESC stops the scan,
+    // then goes back to the cells announced
     if(ui_state.tetra_page == TETRA_PAGE_NEIGHBOURS)
     {
+        if((msg.keys & KEY_HASH) && msg.long_press)
+        {
+            ui_state.tetra_hash_held = false;
+            if(tetraRoam_on())
+            {
+                tetraRoam_stop();
+                vp_beep(BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
+            }
+            else if(tetraRoam_start(state.channel.rx_frequency))
+                vp_beep(BEEP_FUNCTION_LATCH_ON, LONG_BEEP);
+            return true;
+        }
         if(msg.keys & KEY_HASH)
         {
+            ui_state.tetra_hash_held = true;
+            return true;
+        }
+        if((msg.keys == 0) && ui_state.tetra_hash_held)
+        {
+            ui_state.tetra_hash_held = false;
             tetraScan_start();
             return true;
         }
@@ -3839,6 +3890,11 @@ void ui_updateFSM(bool *sync_rtx)
     }
     else if(event.type == EVENT_STATUS)
     {
+#ifdef CONFIG_TETRA
+        // A cell tuned by the roaming: the VFO follows it
+        if(state.channel.mode == OPMODE_TETRA)
+            _ui_tetraFollowRoaming(sync_rtx);
+#endif
 #ifdef CONFIG_GPS
         if ((state.ui_screen == MENU_GPS) &&
             (!vp_isPlaying()) &&

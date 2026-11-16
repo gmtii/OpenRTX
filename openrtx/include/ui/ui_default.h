@@ -314,6 +314,10 @@ typedef struct ui_state_t
     uint8_t tetra_page;
     // SDS, groups and radios pages: entry picked, 0 the most recent
     uint8_t tetra_sds_sel;
+    // Neighbours page: # pressed, a scan on release unless held for roaming
+    bool tetra_hash_held;
+    // Cells tuned by roaming that the VFO followed
+    uint32_t tetra_roam_seen;
 #endif
 #ifdef CONFIG_SPECTRUM
     // Spectrum screen: range swept, marker point, sweeps drawn

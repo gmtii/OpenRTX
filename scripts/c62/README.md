@@ -289,13 +289,34 @@ bar, `3/8`), **0** back to the main one:
   the main carrier at the end. **UP** / **DOWN** pick a cell of the list
   and **ENTER** tunes the VFO to it, keeping the TX offset (from a memory,
   the VFO takes the memory's channel with the new frequency). **ESC**
-  stops the scan, then goes back to the cells announced.
+  stops the scan, then goes back to the cells announced. **#** held
+  starts or stops the roaming (below): the scan starts on releasing **#**.
 - **Symbols** (8): the phase change of the last 256 symbols on a circle
   (four clusters at +-45 and +-135 degrees on a clean signal), and the
   histogram of the raw discriminator values with marks at the four levels
   the demodulator expects. Marks off the peaks mean a wrong offset or
   gain: the demodulator then estimates them again at its next
   re-acquisition, within a few seconds.
+
+**Roaming.** For moving between cells of one network. Hold **#** on the
+Neighbours page (7) while a cell is received: its network (MCC-MNC), the
+cell and the neighbours it announces in that network become the roaming
+table, shown on a line of the page (`Roam 214-1: 6 cells`), and the tower
+on the main screen turns green. Once the burst synchronisation has been
+lost for 3 s, the radio scans the table as the site scan does
+(`Roam 214-1: lost, scanning`, `T roaming` on the main screen) and tunes
+the strongest cell synchronised to whose MCC and MNC are the network's;
+the VFO follows it, keeping the TX offset (from a memory, the VFO takes
+its channel). Cells of other networks are never tuned. If none is found,
+the radio stays on the frequency it had and scans again 10 s later
+(`none, again 7s`).
+
+The table is not lost with the cell: it is replaced only when a new cell
+of the network is received correctly (synchronisation and system
+information) and has announced its neighbours; until then the old table
+is kept, with the new cell added (`, new cell`). Neighbours the cell
+announces later are added. Roaming waits while the uplink is listened to,
+and stops when **#** is held again or the radio leaves the TETRA mode.
 
 **Uplink.** What the radios send to the cell: the radio tunes to the
 uplink of the main carrier, from the cell's duplex spacing (10 MHz below
