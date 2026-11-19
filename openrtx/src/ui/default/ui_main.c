@@ -1022,9 +1022,9 @@ static void _ui_ago(char *buf, size_t len, long long tick)
     && defined(CONFIG_QTH_GRID)
 #include <math.h>
 
-#define RADAR_R 48 /* Radius, pixels */
 /* Radar of the AIS and DMR station pages and the TETRA map page, centred
  * on the own QTH */
+#define RADAR_R 44 /* Radius, pixels */
 #define RADAR_KM_PER_DEG 111.2f
 
 static const color_t radar_ring = { 120, 100, 20, 255 };
@@ -1224,8 +1224,8 @@ static float _ui_drawRadar(const struct radarPoint *pts, int n, int sel,
 }
 
 /**
- * One line of the column right of the radar, small, cut to the column's
- * width: gfx_print() would wrap the rest over the next line.
+ * One line of the column right of the radar, cut to the column's width:
+ * gfx_print() would wrap the rest over the next line.
  */
 static void _ui_radarText(int16_t y, color_t color, const char *text)
 {
@@ -1237,9 +1237,9 @@ static void _ui_radarText(int16_t y, color_t color, const char *text)
         len = sizeof(buf) - 1;
     memcpy(buf, text, len);
     buf[len] = '\0';
-    while(len > 0 && gfx_getTextWidth(FONT_SIZE_5PT, buf) > room)
+    while(len > 0 && gfx_getTextWidth(FONT_SIZE_6PT, buf) > room)
         buf[--len] = '\0';
-    gfx_print((point_t){ x, y }, FONT_SIZE_5PT, TEXT_ALIGN_LEFT, color, "%s",
+    gfx_print((point_t){ x, y }, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, color, "%s",
               buf);
 }
 
@@ -1252,8 +1252,8 @@ static void _ui_radarSide(const char *title, float range, uint8_t rangeIdx,
                           float lat, float lon, long long tick)
 {
     char line[24], d[12];
-    int16_t y = layout.top_h + 9;
-    const int16_t step = 9;
+    int16_t y = layout.top_h + 11;
+    const int16_t step = 11;
 
     _ui_radarText(y, yellow_fab413, title);
     y += step;
