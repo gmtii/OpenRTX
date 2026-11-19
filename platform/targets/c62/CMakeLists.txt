@@ -157,6 +157,8 @@ if(C62_TETRA)
     set_property(TARGET tetra APPEND PROPERTY ${prop}
                  $<TARGET_PROPERTY:zephyr_interface,INTERFACE_${prop}>)
   endforeach()
+  target_include_directories(tetra SYSTEM PRIVATE
+    $<TARGET_PROPERTY:zephyr_interface,INTERFACE_SYSTEM_INCLUDE_DIRECTORIES>)
   target_link_libraries(app PRIVATE tetra)
   target_sources(app PRIVATE
     ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraDemod.c
