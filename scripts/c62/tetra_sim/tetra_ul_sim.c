@@ -444,9 +444,11 @@ int main(int argc, char **argv)
     for (size_t n = 0; n < na; n += chunk) {
         size_t len = (na - n < chunk) ? na - n : chunk;
         if (n <= ulAudio && ulAudio < n + chunk) {
-            printf("downlink end: phase error %u%%, offset %d Hz\n",
+            printf("downlink end: phase error %u%%, offset %d Hz, "
+                   "re-acquisitions %u\n",
                    tetraDemod_phaseError(&dm),
-                   tetraDemod_carrierOffset(&dm));
+                   tetraDemod_carrierOffset(&dm),
+                   (unsigned)tetraDemod_reacquisitions(&dm));
             /* Retuned to the uplink */
             tetraDemod_setHold(&dm, true);
             tetraDemod_setBurst(&dm, burst);
