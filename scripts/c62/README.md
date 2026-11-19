@@ -600,6 +600,14 @@ NVM: saved VFO 145500000 Hz mode 5 (0), settings (0)
 A firmware whose settings or channel structure differs starts from the
 defaults.
 
+**Settings > Display > RX Wake** chooses whether a signal received turns
+the screen on and keeps it on (On, the default): FM with the squelch
+open, M17 data, TETRA, DMR and NXDN speech, ACARS and AIS messages. Off,
+the screen
+follows the keys and the timer only, whatever is received. The LED and
+the audio are not affected. The TETRA roaming (section 5) is a saved
+setting too.
+
 ## 11. Channel memories
 
 The 128 memories keep their place, M001 to M128, shown by pages of a

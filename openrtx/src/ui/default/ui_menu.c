@@ -278,6 +278,12 @@ int _ui_getDisplayValueName(char *buf, uint8_t max_len, uint8_t index)
                      currentLanguage->on :
                      currentLanguage->off);
 	    return 0;
+        case D_RX_WAKE:
+            sniprintf(buf, max_len, "%s",
+                     (last_state.settings.noRxWake) ?
+                     currentLanguage->off :
+                     currentLanguage->on);
+            return 0;
     }
     sniprintf(buf, max_len, "%d", value);
     return 0;

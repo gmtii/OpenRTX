@@ -46,7 +46,8 @@ typedef struct
             vpPhoneticSpell : 1,  // Phonetic spell enabled
             macroMenuLatch  : 1,  // Automatic latch of macro menu
             tetraRoam       : 1,  // TETRA roaming, from the first cell
-            _reserved       : 2;
+            noRxWake        : 1,  // A signal received leaves the screen off
+            _reserved       : 1;
     bool    m17_can_rx;           // Check M17 CAN on RX
     char    m17_dest[10];         // M17 destination
     bool    showBatteryIcon;      // Battery display true: icon, false: percentage
@@ -75,6 +76,7 @@ static const settings_t default_settings =
     0,                            // Phonetic spell off
     1,                            // Automatic latch of macro menu enabled
     0,                            // TETRA roaming off
+    0,                            // A signal received wakes the screen
     0,                            // not used
     false,                        // Check M17 CAN on RX
     "",                           // Empty M17 destination

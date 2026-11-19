@@ -181,7 +181,8 @@ const char *display_items[] =
     "Contrast",
 #endif
     "Timer",
-    "Battery Icon"
+    "Battery Icon",
+    "RX Wake"
 };
 
 #ifdef CONFIG_GPS
@@ -3444,6 +3445,9 @@ void ui_updateFSM(bool *sync_rtx)
                         case D_BATTERY:
                             state.settings.showBatteryIcon = !state.settings.showBatteryIcon;
                             break;
+                        case D_RX_WAKE:
+                            state.settings.noRxWake = !state.settings.noRxWake;
+                            break;
                         default:
                             state.ui_screen = SETTINGS_DISPLAY;
                     }
@@ -3470,6 +3474,12 @@ void ui_updateFSM(bool *sync_rtx)
                         case D_TIMER:
                             _ui_changeTimer(+1);
                             vp_announceDisplayTimer();
+                            break;
+                        case D_BATTERY:
+                            state.settings.showBatteryIcon = !state.settings.showBatteryIcon;
+                            break;
+                        case D_RX_WAKE:
+                            state.settings.noRxWake = !state.settings.noRxWake;
                             break;
                         default:
                             state.ui_screen = SETTINGS_DISPLAY;
@@ -3977,7 +3987,10 @@ void ui_updateFSM(bool *sync_rtx)
         }
 #endif //            CONFIG_GPS
 
-        if (txOngoing || rtx_rxSquelchOpen() || (state.volume != last_state.volume))
+        // A signal received wakes the screen and keeps it on, unless the
+        // display settings say not to (RX Wake off)
+        bool rxWake = !state.settings.noRxWake && rtx_rxSquelchOpen();
+        if (txOngoing || rxWake || (state.volume != last_state.volume))
         {
             _ui_exitStandby(now);
             return;
