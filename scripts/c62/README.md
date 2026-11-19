@@ -329,7 +329,13 @@ of the network is received correctly (synchronisation and system
 information) and has announced its neighbours; until then the old table
 is kept, with the new cell added (`, new cell`). Neighbours the cell
 announces later are added. Roaming waits while the uplink is listened to,
-and stops when **#** is held again or the radio leaves the TETRA mode.
+and stops when the radio leaves the TETRA mode.
+
+Roaming is a setting, kept across modes and power cycles: **TETRA Roam**
+in Settings > Radio (ENTER turns it on or off), and holding **#** on the
+Neighbours page does the same. On, it starts as soon as a cell is
+received in the TETRA mode, and starts again from a cell of another
+network tuned by hand.
 
 **Uplink.** What the radios send to the cell: the radio tunes to the
 uplink of the main carrier, from the cell's duplex spacing (10 MHz below

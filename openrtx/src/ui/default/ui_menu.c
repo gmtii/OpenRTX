@@ -345,6 +345,16 @@ int _ui_getRadioValueName(char *buf, uint8_t max_len, uint8_t index)
     if(index >= settings_radio_num)
         return -1;
 
+#ifdef CONFIG_TETRA
+    if(index == R_TETRA_ROAM)
+    {
+        sniprintf(buf, max_len, "%s", last_state.settings.tetraRoam
+                                          ? currentLanguage->on
+                                          : currentLanguage->off);
+        return 0;
+    }
+#endif
+
     // Only returning the sign
     if(index == R_DIRECTION)
     {

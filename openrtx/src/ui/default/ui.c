@@ -72,6 +72,7 @@
 #include "protocols/AIS/Ais.h"
 #endif
 #ifdef CONFIG_TETRA
+#include "protocols/TETRA/TetraCell.h"
 #include "protocols/TETRA/TetraHeard.h"
 #include "protocols/TETRA/TetraStatus.h"
 #include "protocols/TETRA/TetraScan.h"
@@ -199,6 +200,9 @@ const char *settings_radio_items[] =
     "Offset",
     "Direction",
     "Step",
+#ifdef CONFIG_TETRA
+    "TETRA Roam",
+#endif
 };
 
 const char * settings_m17_items[] =
@@ -1659,6 +1663,39 @@ static void _ui_tetraTuneScanned(uint8_t sel, bool *sync_rtx)
 }
 
 /**
+ * Roaming on or off, kept in the settings: on, it starts from the cell
+ * received, or as soon as one is (see _ui_tetraAutoRoam()).
+ */
+static void _ui_setTetraRoam(bool on)
+{
+    state.settings.tetraRoam = on ? 1 : 0;
+    if(!on)
+        tetraRoam_stop();
+    else if(state.channel.mode == OPMODE_TETRA)
+        tetraRoam_start(state.channel.rx_frequency);
+    vp_beep(on ? BEEP_FUNCTION_LATCH_ON : BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
+}
+
+/**
+ * Roaming on in the settings: start it on the first cell received, and
+ * again on a cell of another network tuned by hand. The TETRA mode stops
+ * it when left.
+ */
+static void _ui_tetraAutoRoam(void)
+{
+    if(!state.settings.tetraRoam)
+        return;
+    struct tetraCellInfo c;
+    tetraCell_get(&c);
+    if(!c.valid)
+        return;
+    static struct tetraRoamInfo r;
+    tetraRoam_get(&r);
+    if((r.state == TETRA_ROAM_OFF) || (r.mcc != c.mcc) || (r.mnc != c.mnc))
+        tetraRoam_start(state.channel.rx_frequency);
+}
+
+/**
  * The roaming tuned another cell: the VFO takes its frequency, keeping the
  * TX offset, from a memory too.
  */
@@ -1753,14 +1790,9 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
     {
         if((msg.keys & KEY_HASH) && msg.long_press)
         {
+            // The setting too: kept across modes and power cycles
             ui_state.tetra_hash_held = false;
-            if(tetraRoam_on())
-            {
-                tetraRoam_stop();
-                vp_beep(BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
-            }
-            else if(tetraRoam_start(state.channel.rx_frequency))
-                vp_beep(BEEP_FUNCTION_LATCH_ON, LONG_BEEP);
+            _ui_setTetraRoam(!state.settings.tetraRoam);
             return true;
         }
         if(msg.keys & KEY_HASH)
@@ -3581,6 +3613,12 @@ void ui_updateFSM(bool *sync_rtx)
                     _ui_menuUp(settings_radio_num);
                 else if(msg.keys & KEY_DOWN || msg.keys & KNOB_RIGHT)
                     _ui_menuDown(settings_radio_num);
+#ifdef CONFIG_TETRA
+                // TETRA roaming: ENTER turns it on or off at once
+                else if((msg.keys & KEY_ENTER)
+                        && (ui_state.menu_selected == R_TETRA_ROAM))
+                    _ui_setTetraRoam(!state.settings.tetraRoam);
+#endif
                 else if(msg.keys & KEY_ENTER) {
                     ui_state.edit_mode = true;
                     // If we are entering R_OFFSET clear temp offset
@@ -3906,9 +3944,13 @@ void ui_updateFSM(bool *sync_rtx)
     else if(event.type == EVENT_STATUS)
     {
 #ifdef CONFIG_TETRA
-        // A cell tuned by the roaming: the VFO follows it
+        // Roaming kept on in the settings; a cell tuned by the roaming:
+        // the VFO follows it
         if(state.channel.mode == OPMODE_TETRA)
+        {
+            _ui_tetraAutoRoam();
             _ui_tetraFollowRoaming(sync_rtx);
+        }
 #endif
 #ifdef CONFIG_GPS
         if ((state.ui_screen == MENU_GPS) &&

@@ -167,6 +167,9 @@ enum settingsRadioItems
     R_OFFSET,
     R_DIRECTION,
     R_STEP,
+#ifdef CONFIG_TETRA
+    R_TETRA_ROAM,
+#endif
 };
 
 enum settingsM17Items
