@@ -75,6 +75,7 @@ enum tetraPage
     TETRA_PAGE_CELL,
     TETRA_PAGE_NEIGHBOURS,
     TETRA_PAGE_SCOPE,
+    TETRA_PAGE_MAP,
     TETRA_PAGE_NUM
 };
 
@@ -300,9 +301,10 @@ typedef struct ui_state_t
     bool dmr_page;
     uint8_t dmr_sel;
 #endif
-#if defined(CONFIG_AIS) || defined(CONFIG_DMR_RX)
+#if defined(CONFIG_AIS) || defined(CONFIG_DMR_RX) || defined(CONFIG_TETRA)
     // Radar view of the AIS or DMR station page (ENTER), and its range (#),
-    // 0 for the smallest one holding every station
+    // also of the TETRA map page; 0 for the smallest one holding every
+    // station
     bool radar;
     uint8_t radar_range;
 #endif

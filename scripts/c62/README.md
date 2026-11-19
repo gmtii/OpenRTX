@@ -243,7 +243,7 @@ carrier: the other carriers are found from it.
 
 **\*** on the VFO or memory screen cycles the TETRA pages; on a page, or
 anywhere on a memory, a number goes straight to another (shown on the top
-bar, `3/8`), **0** back to the main one:
+bar, `3/9`), **0** back to the main one:
 
 - **Main**: the cell, the call, the last SDS text or status on line 1.
 - **Diagnostics** (1): sync, phase error (10-20 % is a clean signal, 58 % is
@@ -310,6 +310,12 @@ bar, `3/8`), **0** back to the main one:
   the demodulator expects. Marks off the peaks mean a wrong offset or
   gain: the demodulator then estimates them again at its next
   re-acquisition, within a few seconds.
+- **Map** (9): the radios heard with a position (LIP location reports, as
+  on the Radios page) on the radar of the own QTH (`C62_QTH_GRID`, see
+  section 6): north up, rings at the range and half of it, the radio
+  picked with **UP** / **DOWN** yellow and circled, its ISSI, distance,
+  bearing and age beside the radar. **#** steps the range: automatic (`A`),
+  then 2 to 200 km. **ESC** goes back.
 
 **Roaming.** For moving between cells of one network. Hold **#** on the
 Neighbours page (7) while a cell is received: its network (MCC-MNC), the

@@ -1734,7 +1734,7 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
     if(msg.keys & KEY_STAR)
     {
         // Next TETRA page: main, diagnostics, SDS, groups, radios, calls,
-        // cell, neighbours, symbols
+        // cell, neighbours, symbols, map
         ui_state.tetra_page = (ui_state.tetra_page + 1) % TETRA_PAGE_NUM;
         ui_state.tetra_sds_sel = 0;
         return true;
@@ -1839,7 +1839,17 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
         }
     }
 
-    // List pages: SDS, groups and radios
+#ifdef CONFIG_QTH_GRID
+    // Map page: # steps the radar's range, the automatic one first
+    if((ui_state.tetra_page == TETRA_PAGE_MAP) && (msg.keys & KEY_HASH))
+    {
+        ui_state.radar_range = (ui_state.radar_range + 1)
+                             % (UI_RADAR_RANGES + 1);
+        return true;
+    }
+#endif
+
+    // List pages: SDS, groups, radios, calls, and the map's radios
     uint8_t entries;
     switch(ui_state.tetra_page)
     {
@@ -1854,6 +1864,9 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
             break;
         case TETRA_PAGE_CALLS:
             entries = TETRA_HEARD_CALLS;
+            break;
+        case TETRA_PAGE_MAP:
+            entries = TETRA_HEARD_RADIOS;
             break;
         default:
             return false;

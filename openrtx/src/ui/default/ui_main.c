@@ -1018,11 +1018,13 @@ static void _ui_ago(char *buf, size_t len, long long tick)
 }
 #endif
 
-#if (defined(CONFIG_AIS) || defined(CONFIG_DMR_RX)) && defined(CONFIG_QTH_GRID)
+#if (defined(CONFIG_AIS) || defined(CONFIG_DMR_RX) || defined(CONFIG_TETRA)) \
+    && defined(CONFIG_QTH_GRID)
 #include <math.h>
 
-/* Radar of the AIS and DMR station pages, centred on the own QTH */
 #define RADAR_R 48 /* Radius, pixels */
+/* Radar of the AIS and DMR station pages and the TETRA map page, centred
+ * on the own QTH */
 #define RADAR_KM_PER_DEG 111.2f
 
 static const color_t radar_ring = { 120, 100, 20, 255 };
@@ -2046,6 +2048,62 @@ static void _ui_drawTetraRadios(ui_state_t *ui_state)
  * of the raw discriminator values with the four levels the demodulator's
  * fit expects: marks off the peaks show a wrong gain or offset.
  */
+static void _ui_drawTetraScope(void);
+
+/**
+ * TETRA map page: the radios heard with a position (LIP location reports)
+ * on the radar of the own QTH; UP/DOWN pick one, # steps the range.
+ */
+static void _ui_drawTetraMap(ui_state_t *ui_state)
+{
+#ifdef CONFIG_QTH_GRID
+    static const float ranges[UI_RADAR_RANGES] = { 2, 5, 10, 20, 50, 100,
+                                                   200 };
+    static UI_BSS struct radarPoint pts[TETRA_HEARD_RADIOS];
+    static UI_BSS uint8_t idx[TETRA_HEARD_RADIOS];
+
+    int n = tetraHeard_radios(heardRadios, TETRA_HEARD_RADIOS);
+    int np = 0;
+    for(int i = 0; i < n; i++)
+    {
+        if(!heardRadios[i].pos)
+            continue;
+        pts[np].lat = heardRadios[i].lat / 100000.0f;
+        pts[np].lon = heardRadios[i].lon / 100000.0f;
+        pts[np].dir = -1;
+        pts[np].color = radar_cyan;
+        idx[np] = (uint8_t)i;
+        np++;
+    }
+
+    // The pick, among the radios with a position, newest first
+    if(np > 0 && ui_state->tetra_sds_sel >= np)
+        ui_state->tetra_sds_sel = np - 1;
+    int sel = (np > 0) ? ui_state->tetra_sds_sel : -1;
+
+    float range = _ui_drawRadar(pts, np, sel, ranges, UI_RADAR_RANGES,
+                                ui_state->radar_range, 1.0f);
+    if(sel >= 0)
+    {
+        const struct tetraRadio *r = &heardRadios[idx[sel]];
+        char name[12];
+        sniprintf(name, sizeof(name), "%lu", (unsigned long)r->issi);
+        _ui_radarSide("LIP", range, ui_state->radar_range, "km", sel, np,
+                      name, pts[sel].lat, pts[sel].lon, r->last);
+    }
+    else
+    {
+        _ui_radarSide("LIP", range, ui_state->radar_range, "km", -1, 0, "",
+                      0, 0, 0);
+    }
+#else
+    (void)ui_state;
+    point_t pos = { layout.horizontal_pad, (int16_t)(layout.top_h + 22) };
+    gfx_print(pos, FONT_SIZE_6PT, TEXT_ALIGN_LEFT, info_grey,
+              "No QTH: build with C62_QTH_GRID");
+#endif
+}
+
 static void _ui_drawTetraScope(void)
 {
     static UI_BSS float d[TETRA_DEMOD_SCOPE];
@@ -2179,6 +2237,9 @@ static bool _ui_drawTetraPage(ui_state_t *ui_state)
             break;
         case TETRA_PAGE_SCOPE:
             _ui_drawTetraScope();
+            break;
+        case TETRA_PAGE_MAP:
+            _ui_drawTetraMap(ui_state);
             break;
         default:
             break;
