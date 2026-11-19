@@ -63,6 +63,7 @@ struct tetraDemod {
     float sx, sxx, st, sxt; /* Running moments */
     /* Timing */
     float cost[TETRA_DEMOD_SPS];
+    float energy[TETRA_DEMOD_SPS]; /* Per phase, while acquiring */
     bool acquired;
     float drift; /* Total timing correction, samples */
     float rate;  /* Timing correction per symbol (clock offset) */

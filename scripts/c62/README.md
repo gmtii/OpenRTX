@@ -206,6 +206,10 @@ How it works: the BK4819 runs the same flat, wide receive path as M17
 symbol, a timing loop for the sample clock offset, a running fit of gain
 and carrier offset, and a 9-tap equalizer seeded with taps measured on the
 C62 (`CONFIG_TETRA_EQ_INIT` in `hwconfig.h`). Its soft bits go to libtetra.
+The symbol timing is acquired where the integrated signal has the most
+energy, and the gain from that energy, which needs no gain or offset
+estimated beforehand (from SP5WWP's `c62/tetra` branch): it locks at the
+first try where a start on a wrong timing used to re-acquire.
 
 Speech: clear (not encrypted) speech is played on the speaker. libtetra
 decodes each traffic slot into two speech frames, and

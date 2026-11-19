@@ -16,6 +16,19 @@
 
 #define WARMUP_SYMBOLS 1024  /* Gain and offset from moments */
 #define ACQUIRE_SYMBOLS 1024 /* Then the timing cost over a full symbol */
+/*
+ * Acquire the timing at the phase where the integrated signal has the most
+ * energy, and the gain from that energy, rather than at the smallest
+ * decision error: that needs a gain and offset estimated before the timing
+ * was known. At a wrong timing the values are smaller, the gain comes out
+ * too high, outer symbols wrap past pi and the error can point to the wrong
+ * phase: the demodulator then re-acquired for seconds, or kept a wrong
+ * carrier offset. From SP5WWP's c62/tetra branch, measured there on C62
+ * captures (phase error 21.3% at every start, against 21 to 46%).
+ */
+#ifndef ACQ_ENERGY
+#define ACQ_ENERGY 1
+#endif
 #ifndef COST_ALPHA
 #define COST_ALPHA (1.0f / 256)
 #endif
@@ -158,6 +171,7 @@ static void reacquire(struct tetraDemod *dm)
     dm->sx = dm->sxx = dm->st = dm->sxt = 0;
     dm->acquired = false;
     memset(dm->cost, 0, sizeof(dm->cost));
+    memset(dm->energy, 0, sizeof(dm->energy));
     memcpy(dm->eq, dm->eqInit, sizeof(dm->eq));
     dm->eqBias = 0;
     dm->errPow = 0;
@@ -375,6 +389,39 @@ static size_t symbol(struct tetraDemod *dm, float d, int8_t *soft)
     return 2;
 }
 
+#if ACQ_ENERGY
+/**
+ * Acquisition without trusting the gain and offset: the integrated signal
+ * has the most energy at the symbol centre, whatever the gain. Set the gain
+ * from that energy (pi/4-DQPSK: E[phi^2] = 5 (pi/4)^2) and seed the fit
+ * with it.
+ *
+ * @return position of the maximum relative to the current one, samples.
+ */
+static float acquireByEnergy(struct tetraDemod *dm)
+{
+    int best = 0;
+    for (int o = 1; o < SPS; o++) {
+        if (dm->energy[o] > dm->energy[best])
+            best = o;
+    }
+    float em = dm->energy[(best + SPS - 1) % SPS];
+    float e0 = dm->energy[best];
+    float ep = dm->energy[(best + 1) % SPS];
+    float den = em - 2 * e0 + ep;
+    float vertex = best - SPS / 2 + (den < 0 ? 0.5f * (em - ep) / den : 0);
+
+    if (e0 > 0) {
+        float g = sqrtf(5.0f) * (PI_F / 4) / sqrtf(e0);
+        float var = dm->sxx - dm->sx * dm->sx;
+        dm->gain = g;
+        dm->st = g * (dm->sx - dm->offset);
+        dm->sxt = dm->sx * dm->st + g * var;
+    }
+    return vertex;
+}
+#endif
+
 /**
  * Timing: running decision error at the 8 phases around the symbol, then
  * steer to the minimum (parabolic interpolation, circular).
@@ -388,6 +435,12 @@ static void timing(struct tetraDemod *dm)
         float v = sampleAt(dm, o - SPS / 2);
         float e = decisionError(dm->gain * (v - dm->offset));
         dm->cost[o] += COST_ALPHA * (e * e - dm->cost[o]);
+#if ACQ_ENERGY
+        if (!dm->acquired) {
+            float a = v - dm->offset;
+            dm->energy[o] += COST_ALPHA * (a * a - dm->energy[o]);
+        }
+#endif
     }
 
     int best = 0;
@@ -404,6 +457,9 @@ static void timing(struct tetraDemod *dm)
     if (!dm->acquired) {
         if (dm->symbols < WARMUP_SYMBOLS + ACQUIRE_SYMBOLS)
             return;
+#if ACQ_ENERGY
+        vertex = acquireByEnergy(dm);
+#endif
         /* Jump to the best phase once, then track */
         advance(dm, vertex);
         dm->drift += vertex;
