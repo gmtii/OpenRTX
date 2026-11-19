@@ -237,8 +237,8 @@ lost. The carriers of a cell share their timing and scrambling, so the
 demodulator keeps the main carrier's timing meanwhile and does not
 re-acquire. The carrier number shows on the call card (`call 12 c813`),
 on line 3 of the default screen and on the diagnostics page, in yellow.
-With a group filter set, only that group's calls are followed, and a call
-being played keeps the radio on its carrier. Tune to the cell's main
+With groups selected, only their calls are followed, and a call being
+played keeps the radio on its carrier. Tune to the cell's main
 carrier: the other carriers are found from it.
 
 **\*** on the VFO or memory screen cycles the TETRA pages; on a page, or
@@ -260,16 +260,19 @@ bar, `3/8`), **0** back to the main one:
 - **Groups** (3): the groups heard in clear signalling, most recent first,
   with their calls (`c`), floor grants (`t`), `enc` if the last call was
   encrypted, and their age; under the list, the picked group's last
-  talker and the radios seen in it. **ENTER** (green key) filters the
-  picked group: only its clear calls are played, the others count as
-  `Filtered` on the call card and in the debug page (`flt`). The filtered
-  group is drawn green and marked `F` in the top bar; ENTER on it again
-  removes the filter. **#** excludes the picked group instead, up to 8:
-  its calls are shown (`Filtered` on the call card) but neither played
-  nor followed to another carrier. An excluded group is listed as `X`
-  in grey, on the calls page too, and the top bar shows `X`; **#** on it
-  again takes it back. The filter and the exclusions work together, are
-  kept across frequencies, and are lost on power off.
+  talker and the radios seen in it. **ENTER** (green key) selects the
+  picked group, up to 8: with groups selected only their clear calls are
+  played, the others count as `Filtered` on the call card and in the debug
+  page (`flt`). Selected groups are drawn green, on the calls page too, the
+  page header shows how many (`F3/8`) and the top bar `F`; ENTER on one
+  again takes it back, and with none selected every clear call is played.
+  **#** excludes the picked group instead, up to 8: its calls are shown
+  (`Filtered` on the call card) but neither played nor followed to
+  another carrier. An excluded group is listed as `X` in grey, on the
+  calls page too, and the top bar shows `X`; **#** on it again takes it
+  back. Selecting a group takes it out of the exclusions, and excluding it
+  out of the selection. Both are kept across frequencies, and are lost on
+  power off.
 - **Radios** (4): the radios heard (callers, talkers, SDS senders,
   registrations), most recent first, with their last group and age;
   under the list, the picked radio's last activity, its calls and SDS,

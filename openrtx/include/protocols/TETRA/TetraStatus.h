@@ -165,27 +165,40 @@ void tetraStatus_uplinkActive(bool on, uint32_t hz);
  */
 bool tetraStatus_sync(void);
 
-/**
- * Play only the calls to one group, as the ESP32-P4 SDR's pin: the other
- * calls are still shown, but not played. Kept until changed, across
- * frequencies.
- *
- * @param gssi: the group, 0 to play every clear call again.
- */
-void tetraStatus_setFilter(uint32_t gssi);
+/* Groups whose calls only are played */
+#define TETRA_SELECTED_MAX 8
 
 /**
- * @return the group filter, 0 if none.
+ * Select a group, or take it back: with groups selected only their calls
+ * are played and followed to another carrier, as the ESP32-P4 SDR's pin;
+ * the other calls are still shown. None selected, every clear call is
+ * played. A group selected is no longer excluded. Kept until changed,
+ * across frequencies.
+ *
+ * @param gssi: the group.
+ * @return true if the group is now selected; false if it was taken back,
+ * or there is no room for another one.
  */
-uint32_t tetraStatus_filter(void);
+bool tetraStatus_toggleSelected(uint32_t gssi);
+
+/**
+ * @return true if the group is selected.
+ */
+bool tetraStatus_selected(uint32_t gssi);
+
+/**
+ * @return number of groups selected, 0 if every clear call is played.
+ */
+int tetraStatus_selectedCount(void);
 
 /* Groups whose calls are never played */
 #define TETRA_EXCLUDED_MAX 8
 
 /**
  * Exclude a group, or take it back: its calls are still shown, but neither
- * played nor followed to another carrier, as those outside the group
- * filter. Kept until changed, across frequencies.
+ * played nor followed to another carrier, as those outside the groups
+ * selected. A group excluded is no longer selected. Kept until changed,
+ * across frequencies.
  *
  * @param gssi: the group.
  * @return true if the group is now excluded; false if it was taken back,

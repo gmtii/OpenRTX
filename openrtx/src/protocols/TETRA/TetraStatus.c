@@ -73,28 +73,47 @@ struct knownCall {
     long long last; /* Tick of the last signalling */
 };
 
-/* Group whose calls only are played, 0 for all; under statusMutex */
-static uint32_t filterGssi;
+/* Groups whose calls only are played, none for all; under statusMutex */
+static uint32_t selected[TETRA_SELECTED_MAX];
+static int nSelected;
 
 /* Groups whose calls are never played; under statusMutex */
 static uint32_t excluded[TETRA_EXCLUDED_MAX];
 static int nExcluded;
 
 /* Under statusMutex */
-static int findExcluded(uint32_t gssi)
+static int findIn(const uint32_t *set, int n, uint32_t gssi)
 {
-    for (int i = 0; i < nExcluded; i++) {
-        if (excluded[i] == gssi)
+    for (int i = 0; i < n; i++) {
+        if (set[i] == gssi)
             return i;
     }
     return -1;
 }
 
+static int findExcluded(uint32_t gssi)
+{
+    return findIn(excluded, nExcluded, gssi);
+}
+
+static int findSelected(uint32_t gssi)
+{
+    return findIn(selected, nSelected, gssi);
+}
+
+/* Under statusMutex: take a group out of a set, if it is there */
+static void removeFrom(uint32_t *set, int *n, uint32_t gssi)
+{
+    int i = findIn(set, *n, gssi);
+    if (i >= 0)
+        set[i] = set[--*n];
+}
+
 /* Under statusMutex: whether a clear call to a group or unit is left out,
- * by the group filter or the exclusions */
+ * by the groups selected or the exclusions */
 static bool leftOut(uint32_t dst, bool group)
 {
-    if (filterGssi != 0 && (!group || dst != filterGssi))
+    if (nSelected > 0 && (!group || findSelected(dst) < 0))
         return true;
     return group && findExcluded(dst) >= 0;
 }
@@ -261,7 +280,7 @@ static void followCall(const struct tetra_call *c)
     /* Another call is being played here: stay with it (see lockTn) */
     if (lockHeld(getTick()))
         return;
-    /* With a group filter, only that group's calls; never an excluded
+    /* With groups selected, only their calls; never an excluded
      * group's */
     if (leftOut(c->dst_ssi, c->group))
         return;
@@ -451,10 +470,10 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
         uint32_t dst;
         pthread_mutex_lock(&statusMutex);
         call = matchTraffic(&ev->u.traffic, &dst);
-        /* A group filter set: only that group's calls are played; an
-         * excluded group's never are */
+        /* Groups selected: only their calls are played; an excluded
+         * group's never are */
         if (call == TETRA_TRAFFIC_CLEAR
-            && ((filterGssi != 0 && dst != filterGssi)
+            && ((nSelected > 0 && findSelected(dst) < 0)
                 || (dst != 0 && findExcluded(dst) >= 0)))
             call = TETRA_TRAFFIC_FILTERED;
         /* One clear call at a time, see lockTn */
@@ -634,30 +653,48 @@ bool tetraStatus_sync(void)
     return sync;
 }
 
-void tetraStatus_setFilter(uint32_t gssi)
+bool tetraStatus_toggleSelected(uint32_t gssi)
 {
+    bool now = false;
     pthread_mutex_lock(&statusMutex);
-    filterGssi = gssi;
+    if (findSelected(gssi) >= 0) {
+        removeFrom(selected, &nSelected, gssi);
+    } else if (gssi != 0 && nSelected < TETRA_SELECTED_MAX) {
+        selected[nSelected++] = gssi;
+        /* Selected, it is not excluded any more */
+        removeFrom(excluded, &nExcluded, gssi);
+        now = true;
+    }
     pthread_mutex_unlock(&statusMutex);
+    return now;
 }
 
-uint32_t tetraStatus_filter(void)
+bool tetraStatus_selected(uint32_t gssi)
 {
     pthread_mutex_lock(&statusMutex);
-    uint32_t g = filterGssi;
+    bool sel = (gssi != 0) && findSelected(gssi) >= 0;
     pthread_mutex_unlock(&statusMutex);
-    return g;
+    return sel;
+}
+
+int tetraStatus_selectedCount(void)
+{
+    pthread_mutex_lock(&statusMutex);
+    int n = nSelected;
+    pthread_mutex_unlock(&statusMutex);
+    return n;
 }
 
 bool tetraStatus_toggleExcluded(uint32_t gssi)
 {
     bool now = false;
     pthread_mutex_lock(&statusMutex);
-    int i = findExcluded(gssi);
-    if (i >= 0) {
-        excluded[i] = excluded[--nExcluded];
+    if (findExcluded(gssi) >= 0) {
+        removeFrom(excluded, &nExcluded, gssi);
     } else if (gssi != 0 && nExcluded < TETRA_EXCLUDED_MAX) {
         excluded[nExcluded++] = gssi;
+        /* Excluded, it is not selected any more */
+        removeFrom(selected, &nSelected, gssi);
         now = true;
     }
     pthread_mutex_unlock(&statusMutex);

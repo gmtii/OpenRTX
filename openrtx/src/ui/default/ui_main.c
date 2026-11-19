@@ -1539,7 +1539,7 @@ static int _ui_groupRow(int i, char *l, char *m, char *r, size_t len)
     sniprintf(l, len, "%s %lu", ex ? "X" : "G", (unsigned long)g->gssi);
     sniprintf(m, len, "%uc %ut%s", g->calls, g->tx, g->encrypted ? " enc" : "");
     _ui_ago(r, 8, g->last);
-    if(g->gssi == tetraStatus_filter())
+    if(tetraStatus_selected(g->gssi))
         return HEARD_MARKED;
     return ex ? HEARD_MUTED : HEARD_PLAIN;
 }
@@ -1584,7 +1584,7 @@ static int _ui_callRow(int i, char *l, char *m, char *r, size_t len)
         sniprintf(r, 8, "now");
     else
         _ui_ago(r, 8, c->last);
-    if((c->dst != 0) && (c->dst == tetraStatus_filter()))
+    if(c->group && tetraStatus_selected(c->dst))
         return HEARD_MARKED;
     return (c->group && tetraStatus_excluded(c->dst)) ? HEARD_MUTED
                                                       : HEARD_PLAIN;
@@ -1644,19 +1644,18 @@ static void _ui_drawTetraGroups(ui_state_t *ui_state)
     int n = tetraHeard_groups(heardGroups, TETRA_HEARD_GROUPS);
     int16_t y = _ui_heardList(ui_state, "Groups", n, _ui_groupRow);
 
-    // The group filter, ENTER sets or clears it; the groups excluded, #
-    // excludes the one picked or takes it back
-    uint32_t filter = tetraStatus_filter();
+    // The groups selected, ENTER selects the one picked or takes it back;
+    // the groups excluded, # excludes it or takes it back
+    int nsel = tetraStatus_selectedCount();
     int nex = tetraStatus_excludedCount();
     point_t hp = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
-    if(filter != 0 && nex > 0)
+    if(nsel > 0 && nex > 0)
         gfx_print(hp, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
-                  (color_t){ 63, 191, 95, 255 }, "F %lu X%d",
-                  (unsigned long)filter, nex);
-    else if(filter != 0)
+                  (color_t){ 63, 191, 95, 255 }, "F%d X%d", nsel, nex);
+    else if(nsel > 0)
         gfx_print(hp, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
-                  (color_t){ 63, 191, 95, 255 }, "F %lu",
-                  (unsigned long)filter);
+                  (color_t){ 63, 191, 95, 255 }, "F%d/%d #=excl", nsel,
+                  TETRA_SELECTED_MAX);
     else if(nex > 0)
         gfx_print(hp, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, info_grey,
                   "X%d/%d  ENT=only", nex, TETRA_EXCLUDED_MAX);
@@ -2944,8 +2943,8 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
                                         rich_green, true)
                         : _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "NO SYNC",
                                         rich_red, false);
-        // A group filter set, groups excluded
-        if(tetraStatus_filter() != 0)
+        // Groups selected, groups excluded
+        if(tetraStatus_selectedCount() > 0)
             x = _ui_richBadge(x + 2, 2, 12, FONT_SIZE_6PT, "F", rich_green,
                               false);
         if(tetraStatus_excludedCount() > 0)
