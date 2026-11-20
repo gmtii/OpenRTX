@@ -83,6 +83,14 @@
  * The last taps found with a low error are restored when the loops stop
  * adapting, and a symbol whose own error is huge does not update them.
  */
+/*
+ * Context correction learning rate, 0 for none. The discriminator's phase
+ * changes are distorted depending on the neighbouring symbols; see
+ * contextCorrect().
+ */
+#ifndef CTX_MU
+#define CTX_MU 0.008f
+#endif
 #define EQ_GOOD_ERROR (0.30f * PI_F / 4)
 #define EQ_SKIP_ERROR (0.70f * PI_F / 4)
 /* After acquiring, the loops converge freely this long (0.45 s) */
@@ -240,6 +248,62 @@ static void advance(struct tetraDemod *dm, float delta)
 }
 
 /**
+ * Symbol value -3, -1, 1, 3 as 0 to 3.
+ */
+static int symbolIndex(float phi)
+{
+    return (decide(phi) + 3) / 2;
+}
+
+/**
+ * Context correction. The phase changes from the radio's discriminator are
+ * distorted depending on the neighbouring symbols: its audio path cuts the
+ * frequency peaks at the envelope dips of pi/4-DQPSK, and on a C62 the
+ * inner points come out about 8% of pi/4 too far out, the outer ones 5% too
+ * far in, which no linear equalizer or gain removes. Learn the mean error
+ * of each pattern of five symbols (decision directed, on a usable signal)
+ * and subtract it. The table describes the radio, not the signal: it is
+ * kept through re-acquisitions. From SP5WWP's c62/tetra branch (63f6c835),
+ * measured there on C62 captures: phase error 17.0 to 12.7%, 24.4 to 16.4%.
+ *
+ * The output is delayed by TETRA_DEMOD_CTX_LEN / 2 symbols, always.
+ *
+ * @param y: equalized phase change, wrapped.
+ * @param learn: adapt the table.
+ * @param out: corrected phase change of the symbol two symbols ago.
+ * @return false while the delay line fills.
+ */
+static bool contextCorrect(struct tetraDemod *dm, float y, bool learn,
+                           float *out)
+{
+    memmove(&dm->ctxY[0], &dm->ctxY[1], sizeof(dm->ctxY) - sizeof(float));
+    dm->ctxY[TETRA_DEMOD_CTX_LEN - 1] = y;
+    if (dm->ctxFill < TETRA_DEMOD_CTX_LEN) {
+        if (++dm->ctxFill < TETRA_DEMOD_CTX_LEN)
+            return false;
+    }
+
+    float centre = dm->ctxY[TETRA_DEMOD_CTX_LEN / 2];
+    if (CTX_MU <= 0) {
+        *out = centre;
+        return true;
+    }
+
+    int idx = 0;
+    for (int i = 0; i < TETRA_DEMOD_CTX_LEN; i++)
+        idx = idx * 4 + symbolIndex(dm->ctxY[i]);
+
+    float *corr = &dm->ctxTable[idx];
+    float y2 = wrapf(centre - *corr);
+    if (learn) {
+        float e = wrapf(centre - decide(y2) * (PI_F / 4));
+        *corr += CTX_MU * (e - *corr);
+    }
+    *out = y2;
+    return true;
+}
+
+/**
  * Check a shift register for the sync sequence, starting on either bit of
  * a dibit.
  */
@@ -394,6 +458,11 @@ static size_t symbol(struct tetraDemod *dm, float d, int8_t *soft)
             dm->eq[i] -= mu * dm->eqIn[i];
         dm->eqBias -= EQ_MU * e;
     }
+
+    /* Context correction, then the error of what is decided */
+    if (!contextCorrect(dm, wrapf(y), dm->acquired && adapt, &y))
+        return 0;
+    e = decisionError(y);
     dm->errPow += ERR_ALPHA * (e * e - dm->errPow);
     dm->errFast += ERR_FAST_ALPHA * (e * e - dm->errFast);
 
