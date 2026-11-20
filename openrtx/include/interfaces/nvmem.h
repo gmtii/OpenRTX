@@ -218,6 +218,25 @@ int nvm_readDmrSettings(dmrSettings_t *settings);
 int nvm_writeDmrSettings(const dmrSettings_t *settings);
 #endif
 
+#ifdef CONFIG_TETRA_AFC
+/**
+ * Read the TETRA frequency correction learned, kept apart from the settings
+ * so that their layout stays.
+ *
+ * @param hz: the correction, Hz.
+ * @return 0 on success, -1 if none is stored.
+ */
+int nvm_readTetraAfc(int16_t *hz);
+
+/**
+ * Write the TETRA frequency correction learned, if it changed.
+ *
+ * @param hz: the correction, Hz.
+ * @return 0 on success, -1 on failure.
+ */
+int nvm_writeTetraAfc(int16_t hz);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

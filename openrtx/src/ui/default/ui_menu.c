@@ -359,6 +359,15 @@ int _ui_getRadioValueName(char *buf, uint8_t max_len, uint8_t index)
                                           : currentLanguage->off);
         return 0;
     }
+#ifdef CONFIG_TETRA_AFC
+    if(index == R_TETRA_AFC)
+    {
+        sniprintf(buf, max_len, "%s", last_state.settings.tetraAfcOff
+                                          ? currentLanguage->off
+                                          : currentLanguage->on);
+        return 0;
+    }
+#endif
 #endif
 
     // Only returning the sign

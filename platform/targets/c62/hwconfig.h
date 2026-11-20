@@ -70,6 +70,14 @@ extern "C" {
 extern const struct BK4819 c62_bk4819;
 
 /*
+ * TETRA automatic frequency correction, by fine tuning of the BK4819: the
+ * phase error is lowest with the carrier about 1.6 kHz off the nominal
+ * frequency (the filters of the flat receive path are not centred), and
+ * the crystal error adds to that.
+ */
+#define CONFIG_TETRA_AFC
+
+/*
  * Settings and VFO saved a few seconds after a change, also when the radio
  * is not turned off with the knob (battery removed or flat)
  */

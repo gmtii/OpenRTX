@@ -47,6 +47,9 @@ typedef struct {
 #ifdef CONFIG_DMR_TX
     dmrSettings_t dmr_settings;
 #endif
+#ifdef CONFIG_TETRA_AFC
+    int16_t tetra_afc; // TETRA frequency correction learned, Hz
+#endif
     gps_t gps_data;
     bool gps_set_time;
     bool gpsDetected;

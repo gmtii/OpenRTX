@@ -197,8 +197,10 @@ The demodulator figures on line 1, e.g. `e11% -234Hz o0 r1`:
   demodulator restart keeps the burst synchronisation, and with it the cell,
   the call and the SDS being received: libtetra finds its bursts again
   within two symbols. Without synchronisation, or after three re-acquisitions
-  within 5 s, the demodulator starts afresh. The first 240 ms after tuning
-  are skipped while the radio audio settles.
+  within 5 s, the demodulator starts afresh. It does not re-acquire within
+  2 s of a block decoded, as a weak signal that still decodes has about the
+  error that triggers one. The first 0.5 s after the receiver starts or a
+  new frequency is set are skipped while the radio audio settles.
 
 How it works: the BK4819 runs the same flat, wide receive path as M17
 (`REG_43 = 0x7e28`, AF bypass). The 48 kHz discriminator output goes to
@@ -208,8 +210,27 @@ and carrier offset, and a 9-tap equalizer seeded with taps measured on the
 C62 (`CONFIG_TETRA_EQ_INIT` in `hwconfig.h`). Its soft bits go to libtetra.
 The symbol timing is acquired where the integrated signal has the most
 energy, and the gain from that energy, which needs no gain or offset
-estimated beforehand (from SP5WWP's `c62/tetra` branch): it locks at the
-first try where a start on a wrong timing used to re-acquire.
+estimated beforehand: it locks at the first try where a start on a wrong
+timing used to re-acquire. The phase errors the discriminator makes
+depending on the neighbouring symbols (its audio path cuts the frequency
+peaks at the envelope dips) are learned per pattern of five symbols and
+subtracted. The soft values saturate, which bounds the weight of the
+symbols a click makes confidently wrong: near -92 dBm this doubles the
+blocks decoded. The clock rate stays within 200 ppm, and the equalizer
+goes back to its last good taps after a disturbance. These come from
+SP5WWP's `c62/tetra` branch, measured there on a C62.
+
+**Frequency correction (AFC).** The C62's flat receive path is not
+centred: the phase error is lowest with the carrier about 1.6 kHz off the
+nominal frequency, and the crystal error adds to that. Every 2 s, while
+blocks decode with a phase error under 35%, the radio moves its fine
+tuning (BK4819, 10 Hz steps, within 4 kHz) towards a zero carrier offset
+reading; it converges in about 20 s. The correction is kept across the
+carriers followed, scans, the uplink and the roaming, stored when it has
+moved 200 Hz, and started from at power on. After 8 s without a decoded
+block on a signal above -90 dBm it goes back to the stored one, then to
+none. The diagnostics page shows it (`AFC +1580`); **Settings > Radio >
+TETRA AFC** turns it off. Other modes get no correction.
 
 Speech: clear (not encrypted) speech is played on the speaker. libtetra
 decodes each traffic slot into two speech frames, and

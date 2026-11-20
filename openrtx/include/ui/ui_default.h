@@ -171,6 +171,9 @@ enum settingsRadioItems
     R_STEP,
 #ifdef CONFIG_TETRA
     R_TETRA_ROAM,
+#ifdef CONFIG_TETRA_AFC
+    R_TETRA_AFC,
+#endif
 #endif
 };
 

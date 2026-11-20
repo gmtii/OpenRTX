@@ -140,6 +140,12 @@ void tetraStatus_demodRestart(void);
 void tetraStatus_setDemod(unsigned phaseErr, int carrierHz, bool present);
 
 /**
+ * @return the frequency correction applied to the receiver, Hz (TETRA
+ * automatic frequency correction, CONFIG_TETRA_AFC); 0 if off or none.
+ */
+int32_t tetra_afcOffset(void);
+
+/**
  * Ask for the uplink of the cell, or the downlink back. From the UI; the
  * TETRA mode does it, if a cell was heard. A new frequency gives the
  * downlink back.

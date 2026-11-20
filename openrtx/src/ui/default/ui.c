@@ -203,6 +203,9 @@ const char *settings_radio_items[] =
     "Step",
 #ifdef CONFIG_TETRA
     "TETRA Roam",
+#ifdef CONFIG_TETRA_AFC
+    "TETRA AFC",
+#endif
 #endif
 };
 
@@ -3641,6 +3644,17 @@ void ui_updateFSM(bool *sync_rtx)
                 else if((msg.keys & KEY_ENTER)
                         && (ui_state.menu_selected == R_TETRA_ROAM))
                     _ui_setTetraRoam(!state.settings.tetraRoam);
+#ifdef CONFIG_TETRA_AFC
+                // TETRA frequency correction: likewise
+                else if((msg.keys & KEY_ENTER)
+                        && (ui_state.menu_selected == R_TETRA_AFC))
+                {
+                    state.settings.tetraAfcOff = !state.settings.tetraAfcOff;
+                    vp_beep(state.settings.tetraAfcOff ? BEEP_FUNCTION_LATCH_OFF
+                                                       : BEEP_FUNCTION_LATCH_ON,
+                            LONG_BEEP);
+                }
+#endif
 #endif
                 else if(msg.keys & KEY_ENTER) {
                     ui_state.edit_mode = true;

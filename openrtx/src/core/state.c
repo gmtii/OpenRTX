@@ -52,6 +52,10 @@ void state_init()
     if (nvm_readDmrSettings(&state.dmr_settings) < 0)
         state.dmr_settings = default_dmr_settings;
 #endif
+#ifdef CONFIG_TETRA_AFC
+    if (nvm_readTetraAfc(&state.tetra_afc) < 0)
+        state.tetra_afc = 0;
+#endif
 
 /*
      * Initialise remaining fields

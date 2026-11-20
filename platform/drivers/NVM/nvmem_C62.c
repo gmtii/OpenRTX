@@ -39,6 +39,9 @@
 #ifdef CONFIG_DMR_TX
 #define DMR_ADDR (0x3000 + sizeof(dmrSettings_t))
 #endif
+#ifdef CONFIG_TETRA_AFC
+#define AFC_ADDR (0x4000 + sizeof(int16_t))
+#endif
 
 /*
  * The flash takes writes in whole blocks of WRITE_BLOCK bytes: records are
@@ -121,6 +124,10 @@ static uint16_t settingsCrc;
 static uint16_t vfoCrc;
 #ifdef CONFIG_DMR_TX
 static uint16_t dmrCrc;
+#endif
+#ifdef CONFIG_TETRA_AFC
+static int16_t afcStored;
+static bool afcKnown;
 #endif
 static bool ready;
 
@@ -301,6 +308,47 @@ int nvm_writeDmrSettings(const dmrSettings_t *settings)
     if (ret == 0)
         dmrCrc = crc;
     printk("NVM: saved DMR settings (%d)\n", ret);
+    return ret;
+}
+#endif
+
+#ifdef CONFIG_TETRA_AFC
+union afcRecord {
+    int16_t hz;
+    uint8_t raw[PADDED(sizeof(int16_t))];
+};
+
+int nvm_readTetraAfc(int16_t *hz)
+{
+    if (!ready)
+        return -1;
+
+    union afcRecord rec = { 0 };
+    int ret = nvm_read(1, 0, AFC_ADDR, rec.raw, sizeof(rec.raw));
+    if (ret < 0)
+        return -1;
+    *hz = rec.hz;
+    afcStored = rec.hz;
+    afcKnown = true;
+    return 0;
+}
+
+int nvm_writeTetraAfc(int16_t hz)
+{
+    if (!ready)
+        return -1;
+    if (afcKnown && hz == afcStored)
+        return 0;
+
+    union afcRecord rec;
+    memset(&rec, 0, sizeof(rec));
+    rec.hz = hz;
+    int ret = nvm_write(1, 0, AFC_ADDR, rec.raw, sizeof(rec.raw));
+    if (ret == 0) {
+        afcStored = hz;
+        afcKnown = true;
+    }
+    printk("NVM: saved TETRA frequency correction %d Hz (%d)\n", hz, ret);
     return ret;
 }
 #endif

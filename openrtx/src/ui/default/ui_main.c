@@ -918,7 +918,8 @@ static void _ui_drawTetraDebug(void)
                   ts.followCarrier);
     else
         gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
-                  "Lost o%u  resync r%u", ts.overruns, ts.resyncs);
+                  "Lost o%u r%u  AFC %+ld", ts.overruns, ts.resyncs,
+                  (long)tetra_afcOffset());
     pos.y += step;
     if (ts.cell)
         gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
