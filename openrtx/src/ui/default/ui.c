@@ -122,6 +122,9 @@ extern void _ui_drawSettingsFM(ui_state_t* ui_state);
 extern void _ui_drawSettingsVoicePrompts(ui_state_t* ui_state);
 extern void _ui_drawSettingsReset2Defaults(ui_state_t* ui_state);
 extern void _ui_drawSettingsRadio(ui_state_t* ui_state);
+#ifdef CONFIG_TETRA
+extern void _ui_drawSettingsTetra(ui_state_t* ui_state);
+#endif
 extern bool _ui_drawMacroMenu(ui_state_t* ui_state);
 #ifdef CONFIG_UI_SAVE_CHANNEL
 extern void _ui_drawChannelSave(ui_state_t* ui_state);
@@ -167,6 +170,9 @@ const char *settings_items[] =
 #ifdef CONFIG_DMR_TX
     "DMR",
 #endif
+#ifdef CONFIG_TETRA
+    "TETRA",
+#endif
     "FM",
     "Accessibility",
     "Default Settings"
@@ -201,13 +207,20 @@ const char *settings_radio_items[] =
     "Offset",
     "Direction",
     "Step",
-#ifdef CONFIG_TETRA
-    "TETRA Roam",
-#ifdef CONFIG_TETRA_AFC
-    "TETRA AFC",
-#endif
-#endif
 };
+
+#ifdef CONFIG_TETRA
+const char *settings_tetra_items[] =
+{
+    "Roaming",
+#ifdef CONFIG_TETRA_AFC
+    "AFC",
+#endif
+    "Late calls",
+};
+const uint8_t settings_tetra_num = sizeof(settings_tetra_items)
+                                 / sizeof(settings_tetra_items[0]);
+#endif
 
 const char * settings_m17_items[] =
 {
@@ -1780,6 +1793,17 @@ static bool _ui_fsm_tetraPages(kbd_msg_t msg, bool *sync_rtx)
         return true;
     }
 
+    // Calls page: # plays the calls whose set-up was not heard, or no
+    // longer (off by default: end-to-end encrypted ones would play as noise)
+    if((ui_state.tetra_page == TETRA_PAGE_CALLS) && (msg.keys & KEY_HASH))
+    {
+        const bool on = !tetraStatus_lateCalls();
+        tetraStatus_setLateCalls(on);
+        vp_beep(on ? BEEP_FUNCTION_LATCH_ON : BEEP_FUNCTION_LATCH_OFF,
+                LONG_BEEP);
+        return true;
+    }
+
     // Cell page: ENTER listens to the cell's uplink, or the downlink again
     if((ui_state.tetra_page == TETRA_PAGE_CELL) && (msg.keys & KEY_ENTER))
     {
@@ -3305,6 +3329,11 @@ void ui_updateFSM(bool *sync_rtx)
                             state.ui_screen = SETTINGS_DMR;
                             break;
 #endif
+#ifdef CONFIG_TETRA
+                        case S_TETRA:
+                            state.ui_screen = SETTINGS_TETRA;
+                            break;
+#endif
                         case S_FM:
                             state.ui_screen = SETTINGS_FM;
                             break;
@@ -3639,23 +3668,6 @@ void ui_updateFSM(bool *sync_rtx)
                     _ui_menuUp(settings_radio_num);
                 else if(msg.keys & KEY_DOWN || msg.keys & KNOB_RIGHT)
                     _ui_menuDown(settings_radio_num);
-#ifdef CONFIG_TETRA
-                // TETRA roaming: ENTER turns it on or off at once
-                else if((msg.keys & KEY_ENTER)
-                        && (ui_state.menu_selected == R_TETRA_ROAM))
-                    _ui_setTetraRoam(!state.settings.tetraRoam);
-#ifdef CONFIG_TETRA_AFC
-                // TETRA frequency correction: likewise
-                else if((msg.keys & KEY_ENTER)
-                        && (ui_state.menu_selected == R_TETRA_AFC))
-                {
-                    state.settings.tetraAfcOff = !state.settings.tetraAfcOff;
-                    vp_beep(state.settings.tetraAfcOff ? BEEP_FUNCTION_LATCH_OFF
-                                                       : BEEP_FUNCTION_LATCH_ON,
-                            LONG_BEEP);
-                }
-#endif
-#endif
                 else if(msg.keys & KEY_ENTER) {
                     ui_state.edit_mode = true;
                     // If we are entering R_OFFSET clear temp offset
@@ -3671,6 +3683,47 @@ void ui_updateFSM(bool *sync_rtx)
             // DMR Settings
             case SETTINGS_DMR:
                 _ui_fsm_dmrSettings(msg);
+                break;
+#endif
+#ifdef CONFIG_TETRA
+            // TETRA Settings: ENTER turns the option picked on or off
+            case SETTINGS_TETRA:
+                if(msg.keys & KEY_UP || msg.keys & KNOB_LEFT)
+                    _ui_menuUp(settings_tetra_num);
+                else if(msg.keys & KEY_DOWN || msg.keys & KNOB_RIGHT)
+                    _ui_menuDown(settings_tetra_num);
+                else if(msg.keys & KEY_ENTER)
+                {
+                    switch(ui_state.menu_selected)
+                    {
+                        case T_ROAM:
+                            _ui_setTetraRoam(!state.settings.tetraRoam);
+                            break;
+#ifdef CONFIG_TETRA_AFC
+                        case T_AFC:
+                            state.settings.tetraAfcOff =
+                                !state.settings.tetraAfcOff;
+                            vp_beep(state.settings.tetraAfcOff
+                                        ? BEEP_FUNCTION_LATCH_OFF
+                                        : BEEP_FUNCTION_LATCH_ON,
+                                    LONG_BEEP);
+                            break;
+#endif
+                        case T_LATE_CALLS:
+                        {
+                            const bool on = !tetraStatus_lateCalls();
+                            tetraStatus_setLateCalls(on);
+                            vp_beep(on ? BEEP_FUNCTION_LATCH_ON
+                                       : BEEP_FUNCTION_LATCH_OFF,
+                                    LONG_BEEP);
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                }
+                else if(msg.keys & KEY_ESC)
+                    _ui_menuBack(MENU_SETTINGS);
                 break;
 #endif
 #ifdef CONFIG_M17
@@ -4160,6 +4213,12 @@ bool ui_updateGUI()
         case SETTINGS_FM:
             _ui_drawSettingsFM(&ui_state);
             break;
+#ifdef CONFIG_TETRA
+        // TETRA settings screen
+        case SETTINGS_TETRA:
+            _ui_drawSettingsTetra(&ui_state);
+            break;
+#endif
         case SETTINGS_ACCESSIBILITY:
             _ui_drawSettingsAccessibility(&ui_state);
             break;

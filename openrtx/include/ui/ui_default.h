@@ -60,7 +60,8 @@ enum uiScreen
     LOW_BAT,
     SPECTRUM,
     CHANNEL_SAVE,
-    FM_RADIO
+    FM_RADIO,
+    SETTINGS_TETRA
 };
 
 /* TETRA pages of the VFO screen */
@@ -122,6 +123,9 @@ enum settingsItems
 #ifdef CONFIG_DMR_TX
     S_DMR,
 #endif
+#ifdef CONFIG_TETRA
+    S_TETRA,
+#endif
     S_FM,
     S_ACCESSIBILITY,
     S_RESET2DEFAULTS,
@@ -169,13 +173,18 @@ enum settingsRadioItems
     R_OFFSET,
     R_DIRECTION,
     R_STEP,
-#ifdef CONFIG_TETRA
-    R_TETRA_ROAM,
-#ifdef CONFIG_TETRA_AFC
-    R_TETRA_AFC,
-#endif
-#endif
 };
+
+#ifdef CONFIG_TETRA
+enum settingsTetraItems
+{
+    T_ROAM = 0,
+#ifdef CONFIG_TETRA_AFC
+    T_AFC,
+#endif
+    T_LATE_CALLS,
+};
+#endif
 
 enum settingsM17Items
 {
@@ -378,6 +387,10 @@ extern const char *settings_dmr_items[];
 extern const uint8_t settings_dmr_num;
 #endif
 extern const uint8_t settings_fm_num;
+#ifdef CONFIG_TETRA
+extern const char *settings_tetra_items[];
+extern const uint8_t settings_tetra_num;
+#endif
 extern const uint8_t settings_accessibility_num;
 extern const uint8_t backup_restore_num;
 extern const uint8_t info_num;

@@ -229,8 +229,13 @@ reading; it converges in about 20 s. The correction is kept across the
 carriers followed, scans, the uplink and the roaming, stored when it has
 moved 200 Hz, and started from at power on. After 8 s without a decoded
 block on a signal above -90 dBm it goes back to the stored one, then to
-none. The diagnostics page shows it (`AFC +1580`); **Settings > Radio >
-TETRA AFC** turns it off. Other modes get no correction.
+none. The diagnostics page shows it (`AFC +1580`); **Settings > TETRA >
+AFC** turns it off. Other modes get no correction.
+
+**Settings > TETRA** gathers the TETRA options, each turned on or off
+with ENTER: **Roaming** (below), **AFC** (above) and **Late calls**
+(below). Roaming and AFC are kept across power cycles; Late calls is off
+at power on.
 
 Speech: clear (not encrypted) speech is played on the speaker. libtetra
 decodes each traffic slot into two speech frames, and
@@ -247,14 +252,19 @@ off.
 Only calls whose signalling was received in clear are played, as on the
 ESP32-P4 SDR: end-to-end encrypted calls (flagged in their setup) show
 `Encrypted`. Traffic of a call whose set-up was not heard, as the calls
-under way when the radio tunes in or syncs, shows `Encrypted?` at first:
-its speech is decoded without playing it, and after three full slots in a
-row passing the speech CRC on its timeslot the call is taken as clear and
-played (`TETRA: clear speech on timeslot 2, set-up not heard: played` on
-the console). Air-encrypted traffic decodes to noise, which passes the
+under way when the radio tunes in or syncs, shows `Encrypted?` and stays
+silent. **Late calls** in Settings > TETRA, or **#** on the calls page
+(5), plays such calls too (the page header shows `late calls on`; off at
+power on): its speech is decoded without playing it, and after three full
+slots in a row passing the speech CRC on its timeslot the call is taken
+as clear and played (`TETRA: clear speech on timeslot 2, set-up not
+heard: played` on the console). Air-encrypted traffic decodes to noise, which passes the
 CRC of a slot about once in 256, so it stays silent. A cell announcing air
-encryption without using it is therefore no problem. Such a call has no
-known group: with groups selected it is not played.
+encryption without using it is therefore no problem. End-to-end encrypted
+speech, however, is encrypted before the channel coding and passes the
+CRC as clear speech does: with this on, an end-to-end encrypted call whose
+set-up was missed is played as noise. Such a call has no known group: with
+groups selected it is not played.
 
 A clear speech call set up on another carrier of the cell is followed
 there: the radio tunes to that carrier, one call at a time, and comes back
@@ -366,8 +376,8 @@ is kept, with the new cell added (`, new cell`). Neighbours the cell
 announces later are added. Roaming waits while the uplink is listened to,
 and stops when the radio leaves the TETRA mode.
 
-Roaming is a setting, kept across modes and power cycles: **TETRA Roam**
-in Settings > Radio (ENTER turns it on or off), and holding **#** on the
+Roaming is a setting, kept across modes and power cycles: **Roaming**
+in Settings > TETRA (ENTER turns it on or off), and holding **#** on the
 Neighbours page does the same. On, it starts as soon as a cell is
 received in the TETRA mode, and starts again from a cell of another
 network tuned by hand.

@@ -1621,6 +1621,15 @@ static void _ui_drawTetraCalls(ui_state_t *ui_state)
 {
     int n = tetraHeard_calls(heardCalls, TETRA_HEARD_CALLS);
     int16_t y = _ui_heardList(ui_state, "Calls", n, _ui_callRow);
+
+    // Calls whose set-up was not heard: played or not, # changes it
+    point_t hp = { layout.horizontal_pad, (int16_t)(layout.top_h + 11) };
+    if(tetraStatus_lateCalls())
+        gfx_print(hp, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, yellow_fab413,
+                  "#: late calls on");
+    else
+        gfx_print(hp, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, info_grey,
+                  "#: late calls");
     if(n == 0)
         return;
 

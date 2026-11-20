@@ -17,6 +17,9 @@
 #include "core/memory_profiling.h"
 #include "ui/ui_strings.h"
 #include "core/voicePromptUtils.h"
+#ifdef CONFIG_TETRA
+#include "protocols/TETRA/TetraStatus.h"
+#endif
 
 #ifdef PLATFORM_TTWRPLUS
 #include "drivers/baseband/SA8x8.h"
@@ -350,25 +353,6 @@ int _ui_getRadioValueName(char *buf, uint8_t max_len, uint8_t index)
 {
     if(index >= settings_radio_num)
         return -1;
-
-#ifdef CONFIG_TETRA
-    if(index == R_TETRA_ROAM)
-    {
-        sniprintf(buf, max_len, "%s", last_state.settings.tetraRoam
-                                          ? currentLanguage->on
-                                          : currentLanguage->off);
-        return 0;
-    }
-#ifdef CONFIG_TETRA_AFC
-    if(index == R_TETRA_AFC)
-    {
-        sniprintf(buf, max_len, "%s", last_state.settings.tetraAfcOff
-                                          ? currentLanguage->off
-                                          : currentLanguage->on);
-        return 0;
-    }
-#endif
-#endif
 
     // Only returning the sign
     if(index == R_DIRECTION)
@@ -1253,6 +1237,53 @@ void _ui_drawSettingsDmr(ui_state_t* ui_state)
         _ui_drawMenuListValue(ui_state, ui_state->menu_selected,
                               _ui_getDmrEntryName, _ui_getDmrValueName);
     }
+}
+#endif
+
+#ifdef CONFIG_TETRA
+static int _ui_getTetraEntryName(char *buf, uint8_t max_len, uint8_t index)
+{
+    if(index >= settings_tetra_num)
+        return -1;
+    sniprintf(buf, max_len, "%s", settings_tetra_items[index]);
+    return 0;
+}
+
+static int _ui_getTetraValueName(char *buf, uint8_t max_len, uint8_t index)
+{
+    if(index >= settings_tetra_num)
+        return -1;
+    bool on = false;
+    switch(index)
+    {
+        case T_ROAM:
+            on = last_state.settings.tetraRoam;
+            break;
+#ifdef CONFIG_TETRA_AFC
+        case T_AFC:
+            on = !last_state.settings.tetraAfcOff;
+            break;
+#endif
+        case T_LATE_CALLS:
+            on = tetraStatus_lateCalls();
+            break;
+    }
+    sniprintf(buf, max_len, "%s", on ? currentLanguage->on
+                                     : currentLanguage->off);
+    return 0;
+}
+
+/**
+ * TETRA settings: roaming, frequency correction, and the calls whose set-up
+ * was not heard; ENTER turns the one picked on or off.
+ */
+void _ui_drawSettingsTetra(ui_state_t* ui_state)
+{
+    gfx_clearScreen();
+    gfx_print(layout.top_pos, layout.top_font, TEXT_ALIGN_CENTER, color_white,
+              "TETRA");
+    _ui_drawMenuListValue(ui_state, ui_state->menu_selected,
+                          _ui_getTetraEntryName, _ui_getTetraValueName);
 }
 #endif
 
