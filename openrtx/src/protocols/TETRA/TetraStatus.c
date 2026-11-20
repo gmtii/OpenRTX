@@ -73,6 +73,12 @@ static bool lockHeld(long long now)
  */
 #define LEARN_SLOTS 3
 static uint8_t learnRun[5]; /* Per timeslot 1..4; under statusMutex */
+/*
+ * Off by default: end-to-end encrypted speech is encrypted before the
+ * channel coding, so it passes the speech CRC as clear speech does, and
+ * would be played as noise when its set-up was missed. Under statusMutex.
+ */
+static bool learnOn;
 
 struct knownCall {
     bool used;
@@ -546,7 +552,7 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
         call = matchTraffic(&ev->u.traffic, &dst);
         /* No known call: its speech tells whether it is clear. Decoded
          * outside the lock, as the UI reads the status meanwhile */
-        if (call == TETRA_TRAFFIC_UNKNOWN) {
+        if (call == TETRA_TRAFFIC_UNKNOWN && learnOn) {
             pthread_mutex_unlock(&statusMutex);
             int good = tetraSpeech_probe(&ev->u.traffic);
             pthread_mutex_lock(&statusMutex);
@@ -817,4 +823,28 @@ int tetraStatus_excludedList(uint32_t *out)
     memcpy(out, excluded, (size_t)n * sizeof(*out));
     pthread_mutex_unlock(&statusMutex);
     return n;
+}
+
+void tetraStatus_setLateCalls(bool on)
+{
+    pthread_mutex_lock(&statusMutex);
+    learnOn = on;
+    if (!on) {
+        /* The calls taken from their speech are dropped */
+        for (int i = 0; i < MAX_CALLS; i++) {
+            if (calls[i].learned)
+                calls[i].used = false;
+        }
+        memset(learnRun, 0, sizeof(learnRun));
+        countCalls();
+    }
+    pthread_mutex_unlock(&statusMutex);
+}
+
+bool tetraStatus_lateCalls(void)
+{
+    pthread_mutex_lock(&statusMutex);
+    bool on = learnOn;
+    pthread_mutex_unlock(&statusMutex);
+    return on;
 }

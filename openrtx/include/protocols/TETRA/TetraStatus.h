@@ -227,6 +227,20 @@ bool tetraStatus_toggleExcluded(uint32_t gssi);
 bool tetraStatus_excluded(uint32_t gssi);
 
 /**
+ * Play the calls whose set-up was not heard (under way when the radio
+ * tuned in or synced) once their speech passes the CRC three full slots in
+ * a row. Off by default: end-to-end encrypted speech passes the CRC too,
+ * and would be played as noise. Turning it off drops the calls taken so.
+ * Kept until changed, across frequencies.
+ */
+void tetraStatus_setLateCalls(bool on);
+
+/**
+ * @return true if the calls whose set-up was not heard are played.
+ */
+bool tetraStatus_lateCalls(void);
+
+/**
  * @return number of groups excluded.
  */
 int tetraStatus_excludedCount(void);
