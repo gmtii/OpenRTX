@@ -404,6 +404,10 @@ The demodulator figures on line 1, `L<level> <dc> o<lost>`: the level of the
 outer symbols and the DC offset, in ADC units, the sample blocks lost
 because the radio could not keep up (should stay 0), and `inv` when the
 symbols arrive inverted. The green LED is on while the radio is locked.
+A fade within a call keeps the lock for up to two superframes (720 ms),
+the next voice sync re-centring it; the call stays on the screen 1.5 s
+after its last good burst, and `LOCK` shows a second after the lock is
+lost, so short fades no longer flash back to the main screen.
 Call events (start, IDs, alias, end) are also printed on the console.
 
 **Positions.** Motorola LRRP location reports, sent as packet data (UDP

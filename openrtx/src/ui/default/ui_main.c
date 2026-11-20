@@ -288,9 +288,27 @@ static void _ui_drawTetraLine1(ui_state_t *ui_state)
 
 static bool _ui_dmrLastFix(char *buf, size_t len);
 
+/* A lock lost for less than this still shows as locked */
+#define DMR_LOCK_HOLD_MS 1000
+
+/**
+ * The lock as shown: held a second after it is lost, so that a short fade
+ * within a call does not flash SEARCH.
+ */
+static bool _ui_dmrLocked(const dmr_demod_status_t *ds)
+{
+    static long long lastLock;
+    long long now = getTick();
+    if (ds->locked)
+        lastLock = now;
+    return ds->locked || (lastLock != 0 && now - lastLock < DMR_LOCK_HOLD_MS);
+}
+
 /**
  * Pick the DMR slot whose call takes over the main screen: the one being
- * heard, else the most recent voice call.
+ * heard, else the most recent voice call. A call stays shown
+ * DMR_CALL_SHOW_MS after its last good burst, also when the lock was lost
+ * meanwhile (a fade).
  *
  * @param slot: the slot information, filled in.
  * @param ds: the demodulator status, filled in.
@@ -299,8 +317,6 @@ static bool _ui_dmrLastFix(char *buf, size_t len);
 static int _ui_dmrCallSlot(dmr_slot_info_t *slot, dmr_demod_status_t *ds)
 {
     dmr_demod_get_status(ds);
-    if (!ds->locked)
-        return -1;
 
     int playing = dmr_voice_get_playing();
     int best = -1;
@@ -386,7 +402,7 @@ static void _ui_drawDmrInfo(void)
         return;
     }
 
-    if (!ds.locked) {
+    if (!_ui_dmrLocked(&ds)) {
         gfx_print(layout.line2_pos, layout.line2_font, TEXT_ALIGN_CENTER,
                   color_white, "DMR searching");
         return;
@@ -3027,10 +3043,11 @@ static void _ui_richTop(ui_state_t *ui_state, bool callShown)
     {
         dmr_demod_status_t ds;
         dmr_demod_get_status(&ds);
-        x = ds.locked ? _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "LOCK",
-                                      rich_green, true)
-                      : _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "SEARCH",
-                                      rich_red, false);
+        bool lock = _ui_dmrLocked(&ds);
+        x = lock ? _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "LOCK", rich_green,
+                                 true)
+                 : _ui_richBadge(x, 2, 12, FONT_SIZE_6PT, "SEARCH", rich_red,
+                                 false);
     }
     #endif
     #ifdef CONFIG_NXDN
@@ -3861,7 +3878,7 @@ static void _ui_richDmr(void)
         dmr_proto_get_slot(i, &s);
         cc = s.cc;
     }
-    if(!ds.locked)
+    if(!_ui_dmrLocked(&ds))
         _ui_richPrint(RICH_PAD, y + 3, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT,
                       rich_grey, "Searching");
     else if(cc >= 0)
