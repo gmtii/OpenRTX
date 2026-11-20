@@ -15,6 +15,9 @@
 #include "interfaces/platform.h"
 #include "interfaces/nvmem.h"
 #include "interfaces/delays.h"
+#ifdef CONFIG_NVM_SAVE_ON_CHANGE
+#include "core/crc.h"
+#endif
 
 state_t state;
 pthread_mutex_t state_mutex;
@@ -85,8 +88,92 @@ void state_terminate()
 #ifdef CONFIG_DMR_TX
     nvm_writeDmrSettings(&state.dmr_settings);
 #endif
+#ifdef CONFIG_TETRA_AFC
+    nvm_writeTetraAfc(state.tetra_afc);
+#endif
     pthread_mutex_destroy(&state_mutex);
 }
+
+#ifdef CONFIG_NVM_SAVE_ON_CHANGE
+/*
+ * Settings and VFO (and the DMR settings and TETRA frequency correction)
+ * saved some seconds after they last changed, also where the radio is not
+ * turned off normally: battery removed or flat. From SP5WWP's c62/tetra
+ * branch (7387a75b). Only what changed is written, a failed save is tried
+ * again a minute later.
+ */
+#define SAVE_CHECK_MS 1000
+#define SAVE_DELAY_MS 5000
+#define SAVE_RETRY_MS 60000
+
+static uint32_t savedCrc;   /* What is stored, or was loaded at boot */
+static uint32_t pendingCrc; /* Changed contents waiting to settle */
+static long long pendingSince;
+static long long lastCheck;
+static bool crcKnown;
+
+static void saveOnChange()
+{
+    long long now = getTick();
+    if ((now - lastCheck) < SAVE_CHECK_MS)
+        return;
+    lastCheck = now;
+
+    settings_t settings;
+    channel_t vfo;
+    pthread_mutex_lock(&state_mutex);
+    settings = state.settings;
+    vfo = state.channel;
+#ifdef CONFIG_DMR_TX
+    dmrSettings_t dmr = state.dmr_settings;
+#endif
+#ifdef CONFIG_TETRA_AFC
+    int16_t afc = state.tetra_afc;
+#endif
+    pthread_mutex_unlock(&state_mutex);
+
+    // Never store a brightness of 0, as in state_terminate()
+    if (settings.brightness == 0)
+        settings.brightness = 5;
+
+    uint32_t crc = ((uint32_t)crc_ccitt(&settings, sizeof(settings)) << 16)
+                 | crc_ccitt(&vfo, sizeof(vfo));
+#ifdef CONFIG_DMR_TX
+    crc ^= crc_ccitt(&dmr, sizeof(dmr)) * 2654435761u;
+#endif
+#ifdef CONFIG_TETRA_AFC
+    crc ^= (uint16_t)afc * 40503u;
+#endif
+    if (!crcKnown) {
+        savedCrc = pendingCrc = crc;
+        crcKnown = true;
+        return;
+    }
+    if (crc == savedCrc)
+        return;
+    if (crc != pendingCrc) {
+        pendingCrc = crc;
+        pendingSince = now;
+        return;
+    }
+    if ((now - pendingSince) < SAVE_DELAY_MS)
+        return;
+
+    int ret = nvm_writeSettingsAndVfo(&settings, &vfo);
+#ifdef CONFIG_DMR_TX
+    if (ret == 0)
+        ret = nvm_writeDmrSettings(&dmr);
+#endif
+#ifdef CONFIG_TETRA_AFC
+    if (ret == 0)
+        ret = nvm_writeTetraAfc(afc);
+#endif
+    if (ret == 0)
+        savedCrc = crc;
+    else
+        pendingSince = now + SAVE_RETRY_MS - SAVE_DELAY_MS;
+}
+#endif
 
 void state_task()
 {
@@ -131,6 +218,10 @@ void state_task()
 #endif
 
     pthread_mutex_unlock(&state_mutex);
+
+#ifdef CONFIG_NVM_SAVE_ON_CHANGE
+    saveOnChange();
+#endif
 
     ui_pushEvent(EVENT_STATUS, 0);
 }

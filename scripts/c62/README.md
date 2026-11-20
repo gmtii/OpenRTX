@@ -592,10 +592,12 @@ filter (spans above 1 MHz) can miss narrow signals between them.
 ## 10. Saved settings
 
 The settings and the VFO (frequency, mode, power, bandwidth, tones) are
-saved when the radio is turned off with the knob, and loaded at power on.
-The C62's MCU stays powered with the knob off: OpenRTX sees the battery
-reading drop, saves and resets. Removing the battery, or letting it run
-flat, does not save.
+saved 5 s after they last changed, and when the radio is turned off with
+the knob, and loaded at power on: also removing the battery, or letting it
+run flat, keeps them. Only what changed is written. The C62's MCU stays
+powered with the knob off: OpenRTX sees the battery reading drop, saves
+and resets. The DMR settings and the TETRA frequency correction are saved
+the same way, in records of their own.
 
 They live in an emulated EEPROM in the first 16 kB of the OpenRTX storage
 partition of the flash (0x2b0000, see `c62.dts`), away from the factory

@@ -68,6 +68,12 @@ extern "C" {
  * with the board devicetree (gpioa/gpiob nodes).
  */
 extern const struct BK4819 c62_bk4819;
+
+/*
+ * Settings and VFO saved a few seconds after a change, also when the radio
+ * is not turned off with the knob (battery removed or flat)
+ */
+#define CONFIG_NVM_SAVE_ON_CHANGE
 extern const struct gpioDev c62_bk4819_gpio;
 extern const struct BK1080 c62_bk1080;
 
