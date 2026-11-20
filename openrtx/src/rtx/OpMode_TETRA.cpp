@@ -102,6 +102,16 @@ static uint32_t lastCrc; /* libtetra's blocks passing their CRC, last seen */
 #define AFC_GAIN 3       /* Hz of correction per Hz of mean reading */
 #define AFC_STEP_MAX 300 /* Hz per period */
 #define AFC_DEADBAND 25  /* Hz of mean reading */
+/*
+ * Each correction retunes the BK4819, which restarts its receiver: the RSSI
+ * drops to its minimum and the demodulator gets a few milliseconds of
+ * garbage. Once within AFC_DEADBAND the correction holds until the reading
+ * stays beyond this for AFC_HOLD_PERIODS periods in a row (the reading
+ * jitters, the radio's error hardly moves), and never moves while speech
+ * is played.
+ */
+#define AFC_HOLD_BAND (3 * AFC_DEADBAND)
+#define AFC_HOLD_PERIODS 2
 #define AFC_RANGE 4000   /* Hz either way: the C62 decodes about 4 kHz off */
 #define AFC_CRC_RECENT_MS 1000
 /* Readings trusted below this phase error (% of pi/4): near the edges of
@@ -120,6 +130,8 @@ static uint32_t afcCount;
 static long long afcStart;
 static long long lastCrcTick;
 static bool afcLoaded; /* Stored correction read, once per power on */
+static bool afcSettled; /* Within AFC_DEADBAND: holding */
+static unsigned afcOver; /* Periods in a row beyond AFC_HOLD_BAND */
 
 static bool afcEnabled(void)
 {
@@ -169,6 +181,8 @@ static void afcBegin(void)
     radio_setRxOffset(afcEnabled() ? afcOffset : 0);
     afcSum = 0;
     afcCount = 0;
+    afcSettled = false;
+    afcOver = 0;
     afcStart = getTick();
     lastCrcTick = afcStart; /* Not "lost" before trying */
 }
@@ -202,8 +216,11 @@ static void afcUpdate(const struct tetraDemod *dm,
             return;
         afcOffset = next;
         radio_setRxOffset(afcOffset);
+        ROAM_PRINT("TETRA AFC: %+ld Hz, nothing decoded\n", (long)afcOffset);
         afcSum = 0;
         afcCount = 0;
+        afcSettled = false;
+        afcOver = 0;
         afcStart = now;
         lastCrcTick = now; /* Give it the time to decode */
         return;
@@ -216,8 +233,21 @@ static void afcUpdate(const struct tetraDemod *dm,
     float mean = (count > 0) ? afcSum / count : 0;
     afcSum = 0;
     afcCount = 0;
-    if (count < 10 || fabsf(mean) <= AFC_DEADBAND)
+    if (count < 10)
         return;
+    if (fabsf(mean) <= AFC_DEADBAND)
+        afcSettled = true;
+    if (fabsf(mean) <= (afcSettled ? AFC_HOLD_BAND : AFC_DEADBAND)) {
+        afcOver = 0;
+        return;
+    }
+    if (afcSettled && ++afcOver < AFC_HOLD_PERIODS)
+        return;
+    /* No retune under the speech played: the next period will do */
+    if (tetraSpeech_playing())
+        return;
+    afcOver = 0;
+    afcSettled = false;
 
     float step = AFC_GAIN * mean;
     if (step > AFC_STEP_MAX)
@@ -231,6 +261,8 @@ static void afcUpdate(const struct tetraDemod *dm,
         next = -AFC_RANGE;
     afcOffset = (next / 10) * 10; /* The BK4819 tunes in 10 Hz steps */
     radio_setRxOffset(afcOffset);
+    ROAM_PRINT("TETRA AFC: %+ld Hz (reading %+d Hz)\n", (long)afcOffset,
+               (int)lrintf(mean));
     afcStore();
 }
 #else
