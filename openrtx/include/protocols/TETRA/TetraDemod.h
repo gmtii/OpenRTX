@@ -72,6 +72,9 @@ struct tetraDemod {
     float eq[TETRA_DEMOD_EQ_TAPS];
     float eqBias;
     float eqInit[TETRA_DEMOD_EQ_TAPS]; /* Restored when re-acquiring */
+    float eqGood[TETRA_DEMOD_EQ_TAPS]; /* Last taps with a low error */
+    float eqBiasGood;
+    bool eqHeld;                       /* Restored since the error rose */
     /* Polarity */
     uint64_t srNorm;
     uint64_t srInv;
@@ -92,6 +95,9 @@ struct tetraDemod {
     float errPow;        /* Running mean square phase error, rad^2 */
     float errFast;       /* The same over a few ms: fades, glitches */
     uint32_t badSymbols; /* Consecutive symbols with a high phase error */
+    uint32_t holdLeft;   /* Symbols left without re-acquisition: a block
+                            decoded lately, see tetraDemod_signalOk() */
+    uint32_t failedAcq;  /* Re-acquisitions since the last block decoded */
     uint32_t reacquired; /* Number of re-acquisitions */
     uint32_t slips;      /* Number of timing jumps followed */
     bool hold;           /* No re-acquisition: see tetraDemod_setHold() */
@@ -165,6 +171,16 @@ uint32_t tetraDemod_reacquisitions(const struct tetraDemod *dm);
  * @param hold: true to hold, false to let it re-acquire again.
  */
 void tetraDemod_setHold(struct tetraDemod *dm, bool hold);
+
+/**
+ * The decoder decoded a block (its CRC passed): no re-acquisition for the
+ * next 2 s. Near the sensitivity limit, or with interference, a signal that
+ * still decodes has a phase error near the one that makes the demodulator
+ * acquire again, and each restart lost the timing, fit and equalizer.
+ *
+ * @param dm: demodulator.
+ */
+void tetraDemod_signalOk(struct tetraDemod *dm);
 
 /**
  * Burst mode, for signals that come and go: the TMO uplink, where each

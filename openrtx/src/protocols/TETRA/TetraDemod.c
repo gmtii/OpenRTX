@@ -50,7 +50,15 @@
 #endif
 #define ERR_ALPHA (1.0f / 1024)
 #define ERR_FAST_ALPHA (1.0f / 64)
-#define SOFT_SCALE 40.0f /* Soft value at pi/4 from the decision boundary */
+/*
+ * Soft value at pi/4 from the decision boundary. Large, so that most values
+ * saturate at +-127: a discriminator's clicks make some symbols confidently
+ * wrong, and a soft decision decoder suffers most from those; saturation
+ * bounds their weight. From SP5WWP's c62/tetra branch (1567bd90): on C62
+ * captures at -92 dBm, 200 instead of 40 doubled the blocks decoded and
+ * divided the bad speech frames by 50; strong signals do not change.
+ */
+#define SOFT_SCALE 200.0f
 /*
  * Losing the signal: random phases give an RMS error of 58% of pi/4, a
  * clean signal 10 to 20%. Above BAD_ERROR the loops stop adapting, and after
@@ -58,6 +66,25 @@
  */
 #define BAD_ERROR (0.45f * PI_F / 4)
 #define BAD_SYMBOLS 8192
+/* No re-acquisition this long after a block decoded: 2 s */
+#define OK_HOLD_SYMBOLS 36000
+/*
+ * After this many re-acquisitions without a block decoded between them,
+ * the clock rate is estimated again too: kept through a long loss of
+ * signal or the transient of a receiver just turned on, it is wrong.
+ */
+#define FULL_RESET_AFTER 3
+/* Largest plausible sample clock offset: 200 ppm, in samples per symbol */
+#define RATE_MAX (200e-6f * SPS)
+/*
+ * Equalizer protection: a disturbance (lost samples, a timing jump,
+ * interference) feeds it garbage for a few symbols before the error
+ * averages notice, and it can then sit where nothing converges any more.
+ * The last taps found with a low error are restored when the loops stop
+ * adapting, and a symbol whose own error is huge does not update them.
+ */
+#define EQ_GOOD_ERROR (0.30f * PI_F / 4)
+#define EQ_SKIP_ERROR (0.70f * PI_F / 4)
 /* After acquiring, the loops converge freely this long (0.45 s) */
 #define GRACE_SYMBOLS (WARMUP_SYMBOLS + ACQUIRE_SYMBOLS + 8192)
 /* A timing jump degrades the signal: only look for one above this error */
@@ -153,6 +180,7 @@ void tetraDemod_init(struct tetraDemod *dm)
     dm->nextInt = TETRA_DEMOD_HIST / 2;
     dm->gain = 1.0f;
     dm->eq[EQ_HALF] = 1.0f;
+    dm->eqGood[EQ_HALF] = 1.0f;
     dm->eqInit[EQ_HALF] = 1.0f;
 }
 
@@ -174,10 +202,18 @@ static void reacquire(struct tetraDemod *dm)
     memset(dm->energy, 0, sizeof(dm->energy));
     memcpy(dm->eq, dm->eqInit, sizeof(dm->eq));
     dm->eqBias = 0;
+    memcpy(dm->eqGood, dm->eqInit, sizeof(dm->eqGood));
+    dm->eqBiasGood = 0;
+    dm->eqHeld = false;
     dm->errPow = 0;
     dm->errFast = 0;
     dm->badSymbols = 0;
     dm->reacquired++;
+    /* Nothing decoded since the last ones either: the clock rate too */
+    if (++dm->failedAcq >= FULL_RESET_AFTER) {
+        dm->failedAcq = 0;
+        dm->rate = 0;
+    }
 }
 
 /**
@@ -352,7 +388,7 @@ static size_t symbol(struct tetraDemod *dm, float d, int8_t *soft)
         pow += dm->eqIn[i] * dm->eqIn[i];
     }
     float e = decisionError(y);
-    if (dm->acquired && adapt) {
+    if (dm->acquired && adapt && fabsf(e) < EQ_SKIP_ERROR) {
         float mu = EQ_MU * e / pow;
         for (int i = 0; i < TETRA_DEMOD_EQ_TAPS; i++)
             dm->eq[i] -= mu * dm->eqIn[i];
@@ -361,10 +397,26 @@ static size_t symbol(struct tetraDemod *dm, float d, int8_t *soft)
     dm->errPow += ERR_ALPHA * (e * e - dm->errPow);
     dm->errFast += ERR_FAST_ALPHA * (e * e - dm->errFast);
 
-    /* Lost the signal for long: start again (not while held) */
+    /* Equalizer protection (see EQ_GOOD_ERROR) */
+    if (dm->acquired) {
+        if (dm->errFast < EQ_GOOD_ERROR * EQ_GOOD_ERROR) {
+            memcpy(dm->eqGood, dm->eq, sizeof(dm->eq));
+            dm->eqBiasGood = dm->eqBias;
+            dm->eqHeld = false;
+        } else if (!adapt && !dm->eqHeld) {
+            memcpy(dm->eq, dm->eqGood, sizeof(dm->eq));
+            dm->eqBias = dm->eqBiasGood;
+            dm->eqHeld = true;
+        }
+    }
+
+    /* Lost the signal for long: start again, not while held, nor while
+     * blocks still decode (see tetraDemod_signalOk()) */
+    if (dm->holdLeft > 0)
+        dm->holdLeft--;
     if (dm->acquired && !converging && !dm->hold
         && dm->errPow >= BAD_ERROR * BAD_ERROR) {
-        if (++dm->badSymbols >= BAD_SYMBOLS) {
+        if (++dm->badSymbols >= BAD_SYMBOLS && dm->holdLeft == 0) {
             reacquire(dm);
             return 0;
         }
@@ -485,7 +537,17 @@ static void timing(struct tetraDemod *dm)
         return;
     }
 
-    dm->rate += TIMING_KI * vertex;
+    /*
+     * Clock rate: integrated only on a usable signal and within plausible
+     * bounds, or noise winds it up to values the loop cannot leave (on a
+     * C62, -90000 ppm after minutes without signal)
+     */
+    if (dm->errFast < BAD_ERROR * BAD_ERROR)
+        dm->rate += TIMING_KI * vertex;
+    if (dm->rate > RATE_MAX)
+        dm->rate = RATE_MAX;
+    else if (dm->rate < -RATE_MAX)
+        dm->rate = -RATE_MAX;
     float step = TIMING_KP * vertex + dm->rate;
     advance(dm, step);
     dm->drift += step;
@@ -656,6 +718,13 @@ void tetraDemod_setEqualizer(struct tetraDemod *dm, const float *taps)
 {
     memcpy(dm->eq, taps, sizeof(dm->eq));
     memcpy(dm->eqInit, taps, sizeof(dm->eqInit));
+    memcpy(dm->eqGood, taps, sizeof(dm->eqGood));
+}
+
+void tetraDemod_signalOk(struct tetraDemod *dm)
+{
+    dm->holdLeft = OK_HOLD_SYMBOLS;
+    dm->failedAcq = 0;
 }
 
 void tetraDemod_scope(const struct tetraDemod *dm, float *d, float *y,
