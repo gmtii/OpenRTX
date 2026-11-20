@@ -33,8 +33,12 @@
 #define RHO_TRACK 0.78f   /* locked: sync expected at a known place */
 #define REFINE 4          /* +-samples searched around the expected sync */
 #define PEAK_HOLD 6       /* samples to keep looking for a better peak */
-#define BAD_MAX_BS 12     /* consecutive undecodable bursts before unlock */
-#define BAD_MAX_MS 6
+/* Consecutive undecodable bursts before unlock: two superframes (720 ms),
+ * so that a fade within a call keeps the lock and the timing, and the next
+ * burst A re-centres it. One superframe (6 MS bursts) dropped the lock on
+ * short fades, and the call card with it. */
+#define BAD_MAX_BS 24
+#define BAD_MAX_MS 12
 #define POL_FLIP_NO_OK \
     24 /* bursts with a sync but no validation before trying the other polarity */
 
