@@ -800,3 +800,21 @@ int tetraStatus_excludedCount(void)
     pthread_mutex_unlock(&statusMutex);
     return n;
 }
+
+int tetraStatus_selectedList(uint32_t *out)
+{
+    pthread_mutex_lock(&statusMutex);
+    int n = nSelected;
+    memcpy(out, selected, (size_t)n * sizeof(*out));
+    pthread_mutex_unlock(&statusMutex);
+    return n;
+}
+
+int tetraStatus_excludedList(uint32_t *out)
+{
+    pthread_mutex_lock(&statusMutex);
+    int n = nExcluded;
+    memcpy(out, excluded, (size_t)n * sizeof(*out));
+    pthread_mutex_unlock(&statusMutex);
+    return n;
+}

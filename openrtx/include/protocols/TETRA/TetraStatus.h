@@ -197,6 +197,15 @@ bool tetraStatus_selected(uint32_t gssi);
  */
 int tetraStatus_selectedCount(void);
 
+/**
+ * Copy the groups selected, for the UI to list them also when they are no
+ * longer among the groups heard.
+ *
+ * @param out: destination, TETRA_SELECTED_MAX entries.
+ * @return number of groups copied.
+ */
+int tetraStatus_selectedList(uint32_t *out);
+
 /* Groups whose calls are never played */
 #define TETRA_EXCLUDED_MAX 8
 
@@ -221,6 +230,14 @@ bool tetraStatus_excluded(uint32_t gssi);
  * @return number of groups excluded.
  */
 int tetraStatus_excludedCount(void);
+
+/**
+ * Copy the groups excluded, as tetraStatus_selectedList().
+ *
+ * @param out: destination, TETRA_EXCLUDED_MAX entries.
+ * @return number of groups copied.
+ */
+int tetraStatus_excludedList(uint32_t *out);
 
 #ifdef __cplusplus
 }

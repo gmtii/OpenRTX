@@ -1557,7 +1557,11 @@ static int _ui_groupRow(int i, char *l, char *m, char *r, size_t len)
     const bool ex = tetraStatus_excluded(g->gssi);
     sniprintf(l, len, "%s %lu", ex ? "X" : "G", (unsigned long)g->gssi);
     sniprintf(m, len, "%uc %ut%s", g->calls, g->tx, g->encrypted ? " enc" : "");
-    _ui_ago(r, 8, g->last);
+    // Selected or excluded, but no longer among the groups heard
+    if(g->last == 0)
+        sniprintf(r, 8, "-");
+    else
+        _ui_ago(r, 8, g->last);
     if(tetraStatus_selected(g->gssi))
         return HEARD_MARKED;
     return ex ? HEARD_MUTED : HEARD_PLAIN;
@@ -1658,9 +1662,54 @@ static void _ui_drawTetraCalls(ui_state_t *ui_state)
  * TETRA groups page: the groups heard, then the picked one's last talker
  * and radios.
  */
+/**
+ * Add to the groups heard the groups selected or excluded that are not
+ * among them (they dropped out of the list, or a new frequency cleared
+ * it): otherwise a filter could never be taken back. With the list full
+ * they take the places of the oldest groups neither selected nor excluded.
+ *
+ * @param n: groups in heardGroups, updated.
+ */
+static void _ui_addKeptGroups(int *n)
+{
+    uint32_t keep[TETRA_SELECTED_MAX + TETRA_EXCLUDED_MAX];
+    int k = tetraStatus_selectedList(keep);
+    k += tetraStatus_excludedList(keep + k);
+
+    for(int i = 0; i < k; i++)
+    {
+        bool listed = false;
+        for(int j = 0; j < *n && !listed; j++)
+            listed = (heardGroups[j].gssi == keep[i]);
+        if(listed)
+            continue;
+
+        int at = -1;
+        if(*n < TETRA_HEARD_GROUPS)
+        {
+            at = (*n)++;
+        }
+        else
+        {
+            // The list is newest first: replace from its end
+            for(int j = *n - 1; j >= 0 && at < 0; j--)
+            {
+                uint32_t g = heardGroups[j].gssi;
+                if(!tetraStatus_selected(g) && !tetraStatus_excluded(g))
+                    at = j;
+            }
+        }
+        if(at < 0)
+            continue;
+        memset(&heardGroups[at], 0, sizeof(heardGroups[at]));
+        heardGroups[at].gssi = keep[i];
+    }
+}
+
 static void _ui_drawTetraGroups(ui_state_t *ui_state)
 {
     int n = tetraHeard_groups(heardGroups, TETRA_HEARD_GROUPS);
+    _ui_addKeptGroups(&n);
     int16_t y = _ui_heardList(ui_state, "Groups", n, _ui_groupRow);
 
     // The groups selected, ENTER selects the one picked or takes it back;
@@ -1687,6 +1736,13 @@ static void _ui_drawTetraGroups(ui_state_t *ui_state)
     const struct tetraGroup *g = &heardGroups[ui_state->tetra_sds_sel];
     const fontSize_t font = FONT_SIZE_6PT;
     point_t pos = { layout.horizontal_pad, (int16_t)(y + 8) };
+    if(g->last == 0)
+    {
+        // Kept in the list for its selection or exclusion only
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey,
+                  "Not heard lately");
+        return;
+    }
     gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "Last %lu, %u radios",
               (unsigned long)g->lastRadio, g->nradios);
 

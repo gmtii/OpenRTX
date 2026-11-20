@@ -299,7 +299,9 @@ bar, `3/9`), **0** back to the main one:
   calls page too, and the top bar shows `X`; **#** on it again takes it
   back. Selecting a group takes it out of the exclusions, and excluding it
   out of the selection. Both are kept across frequencies, and are lost on
-  power off.
+  power off. A group selected or excluded stays in the list also when it
+  is no longer among the groups heard (`-` in place of its age, "Not heard
+  lately" under the list), so that it can always be taken back.
 - **Radios** (4): the radios heard (callers, talkers, SDS senders,
   registrations), most recent first, with their last group and age;
   under the list, the picked radio's last activity, its calls and SDS,
