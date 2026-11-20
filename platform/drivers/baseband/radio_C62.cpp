@@ -53,6 +53,14 @@ static const rtxStatus_t
     *config; // Pointer to data structure with radio configuration
 
 static enum opstatus radioStatus; // Current operating status
+
+/*
+ * Fine receive offset added to every tuning of the receiver (TETRA
+ * frequency correction, radio_setRxOffset()), and the frequency tuned
+ * without it, to apply a new offset at once
+ */
+static int32_t rxOffset;
+static freq_t rxTuned;
 static enum opmode radioMode;     // Current operating mode
 
 /*
@@ -463,7 +471,8 @@ void radio_enableRx()
         gpioDev_set(&c62_bk4819_gpio, GPIO_UHF_RX_LNA);
     }
 
-    bk4819_set_freq(&c62_bk4819, config->rxFrequency);
+    rxTuned = config->rxFrequency;
+    bk4819_set_freq(&c62_bk4819, rxTuned + rxOffset);
 
     if (flatMode(radioMode)) {
         applyM17Fields(false);
@@ -502,7 +511,17 @@ void radio_retuneRx(const freq_t freq)
         gpioDev_clear(&c62_bk4819_gpio, GPIO_VHF_RX_LNA);
         gpioDev_set(&c62_bk4819_gpio, GPIO_UHF_RX_LNA);
     }
-    bk4819_set_freq(&c62_bk4819, freq);
+    rxTuned = freq;
+    bk4819_set_freq(&c62_bk4819, rxTuned + rxOffset);
+}
+
+void radio_setRxOffset(int32_t hz)
+{
+    if (hz == rxOffset)
+        return;
+    rxOffset = hz;
+    if (radioStatus == RX)
+        bk4819_set_freq(&c62_bk4819, rxTuned + rxOffset);
 }
 
 void radio_enableTx()

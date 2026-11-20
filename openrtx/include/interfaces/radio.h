@@ -111,6 +111,16 @@ rssi_t radio_getRssi();
 void radio_retuneRx(const freq_t freq);
 
 /**
+ * Set a fine offset added to the receive frequency, for an automatic
+ * frequency correction; applied at once when receiving, and to every later
+ * tuning of the receiver (radio_enableRx(), radio_retuneRx()). Only radios
+ * with CONFIG_TETRA_AFC implement it. Called from the RTX thread.
+ *
+ * @param hz: offset in Hz.
+ */
+void radio_setRxOffset(int32_t hz);
+
+/**
  * Prepare the radio for a spectrum sweep: receiver on, audio muted, fixed
  * gain, so that RSSI readings on different frequencies can be compared.
  * Only radios building the spectrum view (CONFIG_SPECTRUM) implement the
