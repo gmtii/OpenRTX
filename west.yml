@@ -107,7 +107,7 @@ manifest:
     # TETRA receiver library, for the C62 TETRA mode
     - name: libtetra
       remote: sp5wwp
-      revision: edc379272618941e2b5b27c30af61345bfe3e7e6
+      revision: 6fc088ce7cbad678772054d5bacbc1163548887b
       path: modules/lib/libtetra
       groups:
         - csk6
@@ -116,7 +116,7 @@ manifest:
     - name: openacelp
       remote: sp5wwp
       repo-path: OpenACELP
-      revision: 93c33b9ef852e4fd787c23a5168fa5220cf070cf
+      revision: 54999153be87a99f684c837c376b0fefc2462bda
       path: modules/lib/openacelp
       groups:
         - csk6

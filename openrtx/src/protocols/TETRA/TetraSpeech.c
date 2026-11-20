@@ -39,9 +39,16 @@ static struct tetra_speech_ws channelWs; /* rtx thread only */
 static volatile uint32_t statFrames;     /* Speech frames decoded */
 static volatile uint32_t statBad;        /* Of which failed the CRC (BFI) */
 static volatile uint32_t statOtherTs;    /* Slots ignored: other timeslot */
-static uint8_t followTn;                 /* rtx thread only, 0 = none */
-static long long followLast;             /* rtx thread only, ms */
-static oa_dec_t decoder;                 /* Playback thread only */
+/* Playback statistics, playback thread only */
+static volatile uint32_t playFrames;   /* Frames played */
+static volatile uint32_t playBursts;   /* Playback bursts begun */
+static volatile uint32_t playStreams;  /* Output streams started and synced */
+static volatile uint32_t playBusy;     /* Speaker path refused */
+static volatile uint32_t playNoStream; /* Output stream did not start */
+static volatile uint32_t playNoBuffer; /* No output buffer: burst cut */
+static uint8_t followTn;               /* rtx thread only, 0 = none */
+static long long followLast;           /* rtx thread only, ms */
+static oa_dec_t decoder;               /* Playback thread only */
 static stream_sample_t pcm[2 * OA_FRAME_SAMPLES];
 
 static pthread_t thread;
@@ -76,8 +83,10 @@ static bool pop(struct frame *f)
  */
 static void playBurst(void)
 {
+    playBursts++;
     pathId path = audioPath_request(SOURCE_MCU, SINK_SPK, PRIO_RX);
     if (audioPath_getStatus(path) != PATH_OPEN) {
+        playBusy++;
         audioPath_release(path);
         sleepFor(0, 100);
         return;
@@ -87,6 +96,7 @@ static void playBurst(void)
     streamId stream = audioStream_start(path, pcm, 2 * OA_FRAME_SAMPLES, 8000,
                                         STREAM_OUTPUT | BUF_CIRC_DOUBLE);
     if (stream < 0) {
+        playNoStream++;
         audioPath_release(path);
         sleepFor(0, 100);
         return;
@@ -94,17 +104,21 @@ static void playBurst(void)
 
     oa_dec_init(&decoder, &oa_tables_tetra);
     outputStream_sync(stream, false);
+    playStreams++;
 
     unsigned silence = 0;
     while (!stopRequest && silence < SILENCE_FRAMES
            && audioPath_getStatus(path) == PATH_OPEN) {
         stream_sample_t *out = outputStream_getIdleBuffer(stream);
-        if (out == NULL)
+        if (out == NULL) {
+            playNoBuffer++;
             break;
+        }
 
         struct frame f;
         if (pop(&f)) {
             oa_dec_frame(&decoder, f.bits, f.bfi, out);
+            playFrames++;
             silence = 0;
         } else {
             memset(out, 0, OA_FRAME_SAMPLES * sizeof(*out));
@@ -213,6 +227,18 @@ void tetraSpeech_traffic(const struct tetra_traffic *t)
     pthread_mutex_unlock(&queueMutex);
 }
 
+void tetraSpeech_playStats(uint32_t *played, uint32_t *busy, uint32_t *noStream,
+                           uint32_t *noBuffer, uint32_t *bursts,
+                           uint32_t *streams)
+{
+    *bursts = playBursts;
+    *streams = playStreams;
+    *played = playFrames;
+    *busy = playBusy;
+    *noStream = playNoStream;
+    *noBuffer = playNoBuffer;
+}
+
 void tetraSpeech_stats(uint32_t *frames, uint32_t *bad, uint32_t *otherTs)
 {
     *frames = statFrames;
@@ -225,6 +251,13 @@ void tetraSpeech_stats(uint32_t *frames, uint32_t *bad, uint32_t *otherTs)
 void tetraSpeech_stats(uint32_t *frames, uint32_t *bad, uint32_t *otherTs)
 {
     *frames = *bad = *otherTs = 0;
+}
+
+void tetraSpeech_playStats(uint32_t *played, uint32_t *busy, uint32_t *noStream,
+                           uint32_t *noBuffer, uint32_t *bursts,
+                           uint32_t *streams)
+{
+    *played = *busy = *noStream = *noBuffer = *bursts = *streams = 0;
 }
 
 void tetraSpeech_start(void)

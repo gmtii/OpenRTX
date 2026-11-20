@@ -52,6 +52,22 @@ void tetraSpeech_traffic(const struct tetra_traffic *t);
  */
 void tetraSpeech_stats(uint32_t *frames, uint32_t *bad, uint32_t *otherTs);
 
+/**
+ * Speech playback statistics since boot, for test and remote control.
+ *
+ * @param played: speech frames played on the speaker.
+ * @param busy: times the speaker path was refused (another path holds it).
+ * @param noStream: times the output stream did not start.
+ * @param noBuffer: times a burst ended because no output buffer came.
+ * @param bursts: playback bursts begun.
+ * @param streams: output streams started and synchronised; fewer than
+ * bursts minus the refused and failed ones means playback is blocked
+ * waiting for the output stream.
+ */
+void tetraSpeech_playStats(uint32_t *played, uint32_t *busy, uint32_t *noStream,
+                           uint32_t *noBuffer, uint32_t *bursts,
+                           uint32_t *streams);
+
 #ifdef __cplusplus
 }
 #endif

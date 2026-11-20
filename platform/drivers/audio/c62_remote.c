@@ -25,6 +25,7 @@
  *   p                    list the TETRA demodulator parameters
  *   p <name> <value>     set one: costAlpha timingKp timingKi fitAlpha
  *                        eqMu softScale eqBiasMu fitHold acqEnergy
+ *                        okHold ctxMu ctxSpan
  *   r [0|1]              restart the TETRA receiver; 1 (default) starts
  *                        the equalizer from the measured taps, 0 not
  *   d 0|1                stop or resume recording baseband samples
@@ -33,6 +34,9 @@
  *   rr <reg>             read a BK4819 register (hex or decimal)
  *   rw <reg> <value>     write a BK4819 register; the radio driver may
  *                        overwrite it at the next mode or frequency change
+ *   afc [0|1]            read or set the TETRA frequency correction (a
+ *                        setting, saved like one); also shows the stored
+ *                        correction
  */
 
 #include <stdarg.h>
@@ -102,9 +106,11 @@ static void status(void)
 
     char text[CTRL_TEXT_MAX];
     /* No %lld: newlib-nano's printf fails on long long */
-    int n = snprintf(text, sizeof(text), "S t=%lu m=%u f=%lu rssi=%d",
+    int n = snprintf(text, sizeof(text),
+                     "S t=%lu m=%u f=%lu rssi=%d sv=%lu fo=%ld",
                      (unsigned long)k_uptime_get_32(), mode,
-                     (unsigned long)freq, (int)rtx_getRssi());
+                     (unsigned long)freq, (int)rtx_getRssi(),
+                     (unsigned long)state_nvmSaves, (long)c62_getRxOffset());
 #ifdef CONFIG_TETRA
     if (mode == OPMODE_TETRA && n > 0 && (size_t)n < sizeof(text)) {
         struct tetraDiag dg;
@@ -113,18 +119,23 @@ static void status(void)
         tetra_getDiag(&dg);
         tetra_getStatus(&ts);
         tetraSpeech_stats(&frames, &bad, &otherTs);
-        n += snprintf(text + n, sizeof(text) - n,
-                      " e=%u cfo=%d clk=%d lk=%d sync=%d crc=%lu ral=%lu "
-                      "rq=%lu sl=%lu rs=%u ov=%u fr=%lu bad=%lu ots=%lu "
-                      "cell=%u-%u la=%u seed=%d eq=%d,%d,%d",
-                      dg.phaseErr, dg.carrierHz, dg.clockPpm, dg.locked,
-                      ts.sync, (unsigned long)dg.crcOk,
-                      (unsigned long)dg.realigned, (unsigned long)dg.reacquired,
-                      (unsigned long)dg.slips, ts.resyncs, ts.overruns,
-                      (unsigned long)frames, (unsigned long)bad,
-                      (unsigned long)otherTs, ts.mcc, ts.mnc, ts.la, dg.eqSeed,
-                      (int)(1000 * dg.eq[3]), (int)(1000 * dg.eq[4]),
-                      (int)(1000 * dg.eq[5]));
+        uint32_t played, busy, noStream, noBuffer, bursts, streams;
+        tetraSpeech_playStats(&played, &busy, &noStream, &noBuffer, &bursts,
+                              &streams);
+        n += snprintf(
+            text + n, sizeof(text) - n,
+            " e=%u cfo=%d clk=%d lk=%d sync=%d crc=%lu ral=%lu "
+            "rq=%lu sl=%lu rs=%u ov=%u fr=%lu bad=%lu ots=%lu "
+            "cell=%u-%u la=%u seed=%d eq=%d,%d,%d spk=%lu,%lu,%lu,%lu,%lu,%lu",
+            dg.phaseErr, dg.carrierHz, dg.clockPpm, dg.locked, ts.sync,
+            (unsigned long)dg.crcOk, (unsigned long)dg.realigned,
+            (unsigned long)dg.reacquired, (unsigned long)dg.slips, ts.resyncs,
+            ts.overruns, (unsigned long)frames, (unsigned long)bad,
+            (unsigned long)otherTs, ts.mcc, ts.mnc, ts.la, dg.eqSeed,
+            (int)(1000 * dg.eq[3]), (int)(1000 * dg.eq[4]),
+            (int)(1000 * dg.eq[5]), (unsigned long)played, (unsigned long)busy,
+            (unsigned long)noStream, (unsigned long)noBuffer,
+            (unsigned long)bursts, (unsigned long)streams);
     }
 #endif
     if (n < 0)
@@ -169,6 +180,12 @@ static float *param(const char *name)
         return &p->fitHold;
     if (!strcmp(name, "acqEnergy"))
         return &p->acqEnergy;
+    if (!strcmp(name, "okHold"))
+        return &p->okHold;
+    if (!strcmp(name, "ctxMu"))
+        return &p->ctxMu;
+    if (!strcmp(name, "ctxSpan"))
+        return &p->ctxSpan;
     return NULL;
 }
 
@@ -257,8 +274,9 @@ static void execute(char *cmd)
 #ifdef CONFIG_TETRA
     } else if (!strcmp(argv[0], "p") && argc == 1) {
         static const char *names[] = {
-            "costAlpha", "timingKp", "timingKi", "fitAlpha",  "eqMu",
-            "softScale", "eqBiasMu", "fitHold",  "acqEnergy",
+            "costAlpha", "timingKp",  "timingKi", "fitAlpha",
+            "eqMu",      "softScale", "eqBiasMu", "fitHold",
+            "acqEnergy", "okHold",    "ctxMu",    "ctxSpan",
         };
         for (size_t i = 0; i < ARRAY_SIZE(names); i++)
             printParam(names[i], *param(names[i]));
@@ -301,6 +319,16 @@ static void execute(char *cmd)
         }
         BK4819_writeReg(&c62_bk4819, reg, val);
         reply("rw 0x%02lx 0x%04x", reg, BK4819_readReg(&c62_bk4819, reg));
+#ifdef CONFIG_TETRA_AFC
+    } else if (!strcmp(argv[0], "afc")) {
+        if (argc == 2) {
+            pthread_mutex_lock(&state_mutex);
+            state.settings.tetraAfcOff = (argv[1][0] == '0');
+            pthread_mutex_unlock(&state_mutex);
+        }
+        reply("afc %d stored=%d", !state.settings.tetraAfcOff,
+              (int)state.settings.tetraAfcOffset);
+#endif
     } else if (!strcmp(argv[0], "d") && argc == 2) {
         baseband_dump_pause(argv[1][0] == '0');
         reply("d %d", !baseband_dump_paused());

@@ -35,9 +35,11 @@ extern "C" {
 
 #define TETRA_DEMOD_IN_RATE 48000
 #define TETRA_DEMOD_SPS 8
-#define TETRA_DEMOD_HIST 64   /* 144 kHz samples kept, power of two */
-#define TETRA_DEMOD_INTERP 12 /* FIR taps per polyphase branch */
+#define TETRA_DEMOD_HIST 64       /* 144 kHz samples kept, power of two */
+#define TETRA_DEMOD_INTERP 12     /* FIR taps per polyphase branch */
 #define TETRA_DEMOD_EQ_TAPS 9
+#define TETRA_DEMOD_CTX_LEN 5     /* Symbols in a context: 2 each side */
+#define TETRA_DEMOD_CTX_SIZE 1024 /* 4 values per symbol, 5 symbols */
 
 /*
  * Loop constants, shared by every demodulator instance. The defaults are the
@@ -56,6 +58,11 @@ struct tetraDemodParams {
     float fitHold;   /* Non-zero: no fit adaptation before timing lock */
     float acqEnergy; /* Non-zero: acquire timing at the maximum energy of
                         the integrated signal, and the gain from it */
+    float okHold;    /* Seconds after the last good block decoded
+                        (tetraDemod_signalOk()) without re-acquiring,
+                        however high the phase error; 0: off */
+    float ctxMu;     /* Learning rate of the context correction; 0: off */
+    float ctxSpan;   /* Neighbours on each side in the context: 1 or 2 */
 };
 
 extern struct tetraDemodParams tetraDemodParams;
@@ -87,6 +94,13 @@ struct tetraDemod {
     float eq[TETRA_DEMOD_EQ_TAPS];
     float eqBias;
     float eqInit[TETRA_DEMOD_EQ_TAPS]; /* Restored when re-acquiring */
+    float eqGood[TETRA_DEMOD_EQ_TAPS]; /* Last taps with a low error */
+    float eqBiasGood;
+    bool eqHeld;                       /* Restored since the error rose */
+    /* Context correction: mean error per pattern of neighbouring symbols */
+    float ctxY[TETRA_DEMOD_CTX_LEN]; /* Equalized phases, oldest first */
+    uint8_t ctxFill;
+    float ctxTable[TETRA_DEMOD_CTX_SIZE];
     /* Polarity */
     uint64_t srNorm;
     uint64_t srInv;
@@ -99,6 +113,8 @@ struct tetraDemod {
     float errPow;        /* Running mean square phase error, rad^2 */
     float errFast;       /* The same over a few ms: fades, glitches */
     uint32_t badSymbols; /* Consecutive symbols with a high phase error */
+    uint32_t holdLeft;   /* Symbols left without re-acquiring (okHold) */
+    uint32_t failedAcq;  /* Re-acquisitions since the last good block */
     uint32_t reacquired; /* Number of re-acquisitions */
     uint32_t slips;      /* Number of timing jumps followed */
 };
@@ -127,6 +143,14 @@ void tetraDemod_setEqualizer(struct tetraDemod *dm, const float *taps);
  */
 size_t tetraDemod_process(struct tetraDemod *dm, const int16_t *in, size_t n,
                           int8_t *soft);
+
+/**
+ * Tell the demodulator that the decoder just decoded a good block (a CRC
+ * passed): the signal is being received, so it must not acquire again
+ * however high its phase error. Near the sensitivity limit the phase error
+ * of a still decodable signal reaches the re-acquisition threshold.
+ */
+void tetraDemod_signalOk(struct tetraDemod *dm);
 
 /**
  * @return RMS phase error, in percent of pi/4 (lower is better: about 20%

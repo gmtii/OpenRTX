@@ -37,7 +37,24 @@
 #endif
 #define ERR_ALPHA (1.0f / 1024)
 #define ERR_FAST_ALPHA (1.0f / 64)
-#define SOFT_SCALE 40.0f /* Soft value at pi/4 from the decision boundary */
+/*
+ * Soft value at pi/4 from the decision boundary. Large, so that most values
+ * saturate at +-127: a discriminator's clicks make some symbols confidently
+ * wrong, and a decoder suffers most from those. On C62 captures at -92 dBm,
+ * 200 instead of 40 doubled the blocks decoded and divided the bad speech
+ * frames by 50; stronger signals do not change.
+ */
+#define SOFT_SCALE 200.0f
+/*
+ * Equalizer protection. A disturbance (lost samples, a timing jump, a burst
+ * of interference) feeds the equalizer garbage for a few symbols before the
+ * error averages notice; it can then sit where nothing converges any more.
+ * Keep the last taps found with a low error and go back to them when the
+ * loops stop adapting, and skip the update for a symbol whose own error is
+ * huge.
+ */
+#define EQ_GOOD_ERROR (0.30f * PI_F / 4)
+#define EQ_SKIP_ERROR (0.70f * PI_F / 4)
 /*
  * Losing the signal: random phases give an RMS error of 58% of pi/4, a
  * clean signal 10 to 20%. Above BAD_ERROR the loops stop adapting, and after
@@ -52,6 +69,15 @@
 /* Follow a timing jump of 2 or more samples when its cost is this lower */
 #define SLIP_RATIO 0.5f
 #define POLARITY_WINDOW 16384
+/*
+ * After this many re-acquisitions without a good block decoded between
+ * them, start from scratch: the kept gain, carrier offset and clock rate
+ * are wrong (estimated on noise during a long loss of signal, or on the
+ * transient of a receiver that has just been turned on).
+ */
+#define FULL_RESET_AFTER 3
+/* Largest plausible sample clock offset: 200 ppm, in samples per symbol */
+#define RATE_MAX (200e-6f * SPS)
 
 /* Synchronisation training sequence y, 38 bits, first bit in bit 37 */
 static const uint64_t SYNC_SEQ = 0x30673A7067ULL;
@@ -67,6 +93,9 @@ struct tetraDemodParams tetraDemodParams = {
     .eqBiasMu = EQ_MU,
     .fitHold = 0,
     .acqEnergy = 1,
+    .okHold = 2.0f,
+    .ctxMu = 0.008f,
+    .ctxSpan = 2,
 };
 #define P tetraDemodParams
 
@@ -131,6 +160,7 @@ void tetraDemod_init(struct tetraDemod *dm)
     dm->gain = 1.0f;
     dm->eq[EQ_HALF] = 1.0f;
     dm->eqInit[EQ_HALF] = 1.0f;
+    dm->eqGood[EQ_HALF] = 1.0f;
 }
 
 /**
@@ -140,15 +170,29 @@ void tetraDemod_init(struct tetraDemod *dm)
  */
 static void reacquire(struct tetraDemod *dm)
 {
-    dm->symbols = WARMUP_SYMBOLS + TETRA_DEMOD_EQ_TAPS;
+    if (++dm->failedAcq >= FULL_RESET_AFTER) {
+        /* From scratch: estimate gain and offset again, clock rate zero */
+        dm->failedAcq = 0;
+        dm->symbols = 0;
+        dm->sx = dm->sxx = dm->st = dm->sxt = 0;
+        dm->gain = 1.0f;
+        dm->offset = 0;
+        dm->rate = 0;
+    } else {
+        dm->symbols = WARMUP_SYMBOLS + TETRA_DEMOD_EQ_TAPS;
+    }
     dm->acquired = false;
     memset(dm->cost, 0, sizeof(dm->cost));
     memset(dm->energy, 0, sizeof(dm->energy));
     memcpy(dm->eq, dm->eqInit, sizeof(dm->eq));
     dm->eqBias = 0;
+    memcpy(dm->eqGood, dm->eqInit, sizeof(dm->eqGood));
+    dm->eqBiasGood = 0;
+    dm->eqHeld = false;
     dm->errPow = 0;
     dm->errFast = 0;
     dm->badSymbols = 0;
+    dm->holdLeft = 0;
     dm->reacquired++;
 }
 
@@ -173,6 +217,64 @@ static void advance(struct tetraDemod *dm, float delta)
     int whole = (int)floorf(f);
     dm->nextInt += whole;
     dm->nextFrac = f - whole;
+}
+
+/**
+ * Symbol value -3, -1, 1, 3 as 0 to 3.
+ */
+static int symbolIndex(float phi)
+{
+    return (decide(phi) + 3) / 2;
+}
+
+/**
+ * Context correction. The phase changes from the radio's discriminator are
+ * distorted in a way that depends on the neighbouring symbols (its audio
+ * path cuts the frequency peaks at the envelope dips of pi/4-DQPSK): on a
+ * C62 the inner points come out too far out and the outer ones too far in.
+ * Learn the mean error of each pattern of neighbours and subtract it.
+ *
+ * The output is delayed by TETRA_DEMOD_CTX_LEN / 2 symbols, always, so the
+ * bit stream does not move when the correction is turned on or off.
+ *
+ * @param y: equalized phase change, wrapped.
+ * @param learn: adapt the table (signal usable).
+ * @param out: corrected phase change of the symbol two symbols ago.
+ * @return false while the delay line fills.
+ */
+static bool contextCorrect(struct tetraDemod *dm, float y, bool learn,
+                           float *out)
+{
+    memmove(&dm->ctxY[0], &dm->ctxY[1], sizeof(dm->ctxY) - sizeof(float));
+    dm->ctxY[TETRA_DEMOD_CTX_LEN - 1] = y;
+    if (dm->ctxFill < TETRA_DEMOD_CTX_LEN) {
+        if (++dm->ctxFill < TETRA_DEMOD_CTX_LEN)
+            return false;
+    }
+
+    float centre = dm->ctxY[TETRA_DEMOD_CTX_LEN / 2];
+    if (P.ctxMu <= 0) {
+        *out = centre;
+        return true;
+    }
+
+    int idx = 0;
+    if (P.ctxSpan >= 2) {
+        for (int i = 0; i < TETRA_DEMOD_CTX_LEN; i++)
+            idx = idx * 4 + symbolIndex(dm->ctxY[i]);
+    } else {
+        for (int i = 1; i < TETRA_DEMOD_CTX_LEN - 1; i++)
+            idx = idx * 4 + symbolIndex(dm->ctxY[i]);
+    }
+
+    float *corr = &dm->ctxTable[idx];
+    float y2 = wrapf(centre - *corr);
+    if (learn) {
+        float e = wrapf(centre - decide(y2) * (PI_F / 4));
+        *corr += P.ctxMu * (e - *corr);
+    }
+    *out = y2;
+    return true;
 }
 
 /**
@@ -270,18 +372,41 @@ static size_t symbol(struct tetraDemod *dm, float d, int8_t *soft)
         pow += dm->eqIn[i] * dm->eqIn[i];
     }
     float e = decisionError(y);
-    if (dm->acquired && adapt) {
+    if (dm->acquired && adapt && fabsf(e) < EQ_SKIP_ERROR) {
         float mu = P.eqMu * e / pow;
         for (int i = 0; i < TETRA_DEMOD_EQ_TAPS; i++)
             dm->eq[i] -= mu * dm->eqIn[i];
         dm->eqBias -= P.eqBiasMu * e;
     }
+
+    if (dm->acquired) {
+        if (dm->errFast < EQ_GOOD_ERROR * EQ_GOOD_ERROR) {
+            memcpy(dm->eqGood, dm->eq, sizeof(dm->eq));
+            dm->eqBiasGood = dm->eqBias;
+            dm->eqHeld = false;
+        } else if (!adapt && !dm->eqHeld) {
+            memcpy(dm->eq, dm->eqGood, sizeof(dm->eq));
+            dm->eqBias = dm->eqBiasGood;
+            dm->eqHeld = true;
+        }
+    }
+
+    /* Context correction, then the error of what is decided */
+    if (!contextCorrect(dm, wrapf(y), dm->acquired && adapt, &y))
+        return 0;
+    e = decisionError(y);
     dm->errPow += ERR_ALPHA * (e * e - dm->errPow);
     dm->errFast += ERR_FAST_ALPHA * (e * e - dm->errFast);
 
-    /* Lost the signal for long: start again */
+    /*
+     * Lost the signal for long: start again, unless the decoder decoded a
+     * block lately (near the sensitivity limit the phase error of a still
+     * decodable signal reaches BAD_ERROR)
+     */
+    if (dm->holdLeft > 0)
+        dm->holdLeft--;
     if (dm->acquired && !converging && dm->errPow >= BAD_ERROR * BAD_ERROR) {
-        if (++dm->badSymbols >= BAD_SYMBOLS) {
+        if (++dm->badSymbols >= BAD_SYMBOLS && dm->holdLeft == 0) {
             reacquire(dm);
             return 0;
         }
@@ -395,7 +520,16 @@ static void timing(struct tetraDemod *dm)
         return;
     }
 
-    dm->rate += P.timingKi * vertex;
+    /*
+     * Clock rate: integrate only on a usable signal, within plausible
+     * bounds, or noise winds it up to values the loop cannot leave
+     */
+    if (dm->errFast < BAD_ERROR * BAD_ERROR)
+        dm->rate += P.timingKi * vertex;
+    if (dm->rate > RATE_MAX)
+        dm->rate = RATE_MAX;
+    else if (dm->rate < -RATE_MAX)
+        dm->rate = -RATE_MAX;
     float step = P.timingKp * vertex + dm->rate;
     advance(dm, step);
     dm->drift += step;
@@ -456,7 +590,16 @@ int tetraDemod_clockOffset(const struct tetraDemod *dm)
 void tetraDemod_setEqualizer(struct tetraDemod *dm, const float *taps)
 {
     memcpy(dm->eq, taps, sizeof(dm->eq));
+    memcpy(dm->eqGood, taps, sizeof(dm->eqGood));
     memcpy(dm->eqInit, taps, sizeof(dm->eqInit));
+}
+
+void tetraDemod_signalOk(struct tetraDemod *dm)
+{
+    dm->failedAcq = 0;
+    uint32_t hold = (uint32_t)(P.okHold * SYMBOL_RATE);
+    if (P.okHold > 0 && hold > dm->holdLeft)
+        dm->holdLeft = hold;
 }
 
 uint32_t tetraDemod_reacquisitions(const struct tetraDemod *dm)
