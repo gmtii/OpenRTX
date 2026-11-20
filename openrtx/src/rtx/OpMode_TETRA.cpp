@@ -29,6 +29,13 @@
  * offset on what comes first.
  */
 #define SETTLE_BLOCKS 8
+/*
+ * Blocks dropped after the receiver starts or a new frequency is set: about
+ * 0.5 s, while the radio and its audio path settle. The demodulator took
+ * their transient for the carrier offset: a C62 turned on in TETRA mode
+ * locked after about 18 s instead of 3 (SP5WWP's c62/tetra, 6193eb54).
+ */
+#define START_BLOCKS 17
 
 /* Re-acquisitions this close together restart the demodulator afresh */
 #define REACQ_STUCK 3
@@ -69,6 +76,7 @@ static int16_t baseband[2 * HALF_SAMPLES];
 static int8_t soft[HALF_SAMPLES * 3 / 4 + 8];
 static struct tetraDemod demod;
 static struct tetra_tmo_rx tmo;
+static uint32_t lastCrc; /* libtetra's blocks passing their CRC, last seen */
 
 const struct tetraDemod *tetra_getDemod(void)
 {
@@ -136,7 +144,7 @@ void OpMode_TETRA::reset()
     following = false;
     uplink = false;
     initDemod();
-    settleBlocks = SETTLE_BLOCKS;
+    settleBlocks = START_BLOCKS;
     resync(false);
     tetraStatus_reset();
     lastSyncAt = getTick();
@@ -427,7 +435,7 @@ void OpMode_TETRA::startSampling()
     basebandId = audioStream_start(basebandPath, baseband, 2 * HALF_SAMPLES,
                                    TETRA_DEMOD_IN_RATE,
                                    STREAM_INPUT | BUF_CIRC_DOUBLE);
-    settleBlocks = SETTLE_BLOCKS;
+    settleBlocks = START_BLOCKS;
 }
 
 void OpMode_TETRA::stopSampling()
@@ -601,6 +609,13 @@ void OpMode_TETRA::update(rtxStatus_t *const rtx, const bool newCfg)
     }
 
     tetra_tmo_push_soft(&tmo, soft, n);
+
+    /* Blocks decode: the demodulator keeps its lock (a new libtetra
+     * context counts from zero again) */
+    const uint32_t crc = tetra_tmo_crc_ok(&tmo);
+    if (crc > lastCrc)
+        tetraDemod_signalOk(&demod);
+    lastCrc = crc;
 
     /*
      * Follow a clear call to another carrier of the cell, and come back.
