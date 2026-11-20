@@ -88,6 +88,17 @@ bool tetraSpeech_playing(void);
 void tetraSpeech_traffic(const struct tetra_traffic *t,
                          enum tetraTrafficCall call);
 
+/**
+ * Decode the speech frames of a traffic slot without playing them, to tell
+ * clear speech (the frames pass their CRC) from air-encrypted traffic (it
+ * is noise to the decoder). From the libtetra event callback.
+ *
+ * @param t: traffic slot.
+ * @return number of speech frames passing the CRC, 0 to 2; 0 in a build
+ * without speech.
+ */
+int tetraSpeech_probe(const struct tetra_traffic *t);
+
 #ifdef __cplusplus
 }
 #endif

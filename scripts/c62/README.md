@@ -225,9 +225,15 @@ off.
 
 Only calls whose signalling was received in clear are played, as on the
 ESP32-P4 SDR: end-to-end encrypted calls (flagged in their setup) show
-`Encrypted`. Air-encrypted calls, whose signalling cannot be read, and
-calls set up before the radio tuned in show `Encrypted?` and stay silent.
-Their traffic would only decode to noise.
+`Encrypted`. Traffic of a call whose set-up was not heard, as the calls
+under way when the radio tunes in or syncs, shows `Encrypted?` at first:
+its speech is decoded without playing it, and after three full slots in a
+row passing the speech CRC on its timeslot the call is taken as clear and
+played (`TETRA: clear speech on timeslot 2, set-up not heard: played` on
+the console). Air-encrypted traffic decodes to noise, which passes the
+CRC of a slot about once in 256, so it stays silent. A cell announcing air
+encryption without using it is therefore no problem. Such a call has no
+known group: with groups selected it is not played.
 
 A clear speech call set up on another carrier of the cell is followed
 there: the radio tunes to that carrier, one call at a time, and comes back

@@ -62,8 +62,21 @@ static bool lockHeld(long long now)
 /* A call is forgotten this long after its last signalling, if no release */
 #define KNOWN_CALL_TIMEOUT_MS 60000
 
+/*
+ * Traffic of a call whose set-up was not heard, as the calls under way when
+ * the radio tunes in: its speech frames tell. Clear speech passes their CRC,
+ * air-encrypted traffic is noise to the decoder and passes the 8 parity
+ * bits of a full slot about once in 256. After this many full slots in a
+ * row passing it on a timeslot, the call is taken as clear and played. A
+ * half slot (its first half stolen) has only 4 parity bits: it neither
+ * counts nor breaks the run.
+ */
+#define LEARN_SLOTS 3
+static uint8_t learnRun[5]; /* Per timeslot 1..4; under statusMutex */
+
 struct knownCall {
     bool used;
+    bool learned; /* Its set-up not heard: taken as clear from its speech */
     uint16_t id;
     uint8_t usageMarker; /* 0 if unknown */
     uint8_t timeslots;   /* Bit 0 = TN1, 0 if unknown */
@@ -201,6 +214,16 @@ static void trackCall(const struct tetra_call *c)
     status.lastCallMarker = k->usageMarker;
     status.lastCallSlots = k->timeslots;
 
+    /* A call signalled on a timeslot replaces one taken from its speech
+     * there, which could be clear where this one is encrypted */
+    for (int i = 0; i < MAX_CALLS; i++) {
+        struct knownCall *l = &calls[i];
+        if (l != k && l->used && l->learned
+            && ((l->timeslots & k->timeslots)
+                || (k->usageMarker != 0 && l->usageMarker == k->usageMarker)))
+            l->used = false;
+    }
+
     countCalls();
     if (isNew || usageMarker != k->usageMarker || timeslots != k->timeslots)
         CALL_PRINT("TETRA call %u to %lu: usage marker %u, timeslots 0x%x%s\n",
@@ -231,6 +254,10 @@ static enum tetraTrafficCall matchTraffic(const struct tetra_traffic *t,
         bool marker = (k->usageMarker != 0)
                    && (k->usageMarker == t->usage_marker);
         if (marker || (k->timeslots & slot)) {
+            /* No signalling keeps a call taken from its speech: its
+             * traffic does */
+            if (k->learned)
+                k->last = now;
             *dst = k->dst;
             if (k->encrypted)
                 return TETRA_TRAFFIC_ENCRYPTED;
@@ -250,6 +277,53 @@ static enum tetraTrafficCall matchTraffic(const struct tetra_traffic *t,
     }
 
     return TETRA_TRAFFIC_UNKNOWN;
+}
+
+/**
+ * Traffic of no known call: count the full slots in a row whose speech
+ * passed the CRC on its timeslot, and once there are LEARN_SLOTS of them
+ * take the call as clear, by its timeslot and usage marker. Under
+ * statusMutex.
+ *
+ * @param good: speech frames of the slot passing the CRC.
+ * @return true if the call is now known as clear.
+ */
+static bool learnClear(const struct tetra_traffic *t, int good)
+{
+    uint8_t tn = t->time.tn;
+    if (tn < 1 || tn > 4)
+        return false;
+    if (good <= 0) {
+        learnRun[tn] = 0;
+        return false;
+    }
+    if (good < 2)
+        return false;
+    if (++learnRun[tn] < LEARN_SLOTS)
+        return false;
+    learnRun[tn] = 0;
+
+    /* A free entry, else the call with the oldest signalling */
+    struct knownCall *k = &calls[0];
+    for (int i = 0; i < MAX_CALLS; i++) {
+        if (!calls[i].used) {
+            k = &calls[i];
+            break;
+        }
+        if (calls[i].last < k->last)
+            k = &calls[i];
+    }
+    memset(k, 0, sizeof(*k));
+    k->used = true;
+    k->learned = true;
+    k->id = t->call_id;
+    k->usageMarker = t->usage_marker;
+    k->timeslots = (uint8_t)(1u << (tn - 1));
+    k->last = getTick();
+    countCalls();
+    CALL_PRINT("TETRA: clear speech on timeslot %u, set-up not heard: "
+               "played\n", tn);
+    return true;
 }
 
 /* Under statusMutex */
@@ -470,6 +544,15 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
         uint32_t dst;
         pthread_mutex_lock(&statusMutex);
         call = matchTraffic(&ev->u.traffic, &dst);
+        /* No known call: its speech tells whether it is clear. Decoded
+         * outside the lock, as the UI reads the status meanwhile */
+        if (call == TETRA_TRAFFIC_UNKNOWN) {
+            pthread_mutex_unlock(&statusMutex);
+            int good = tetraSpeech_probe(&ev->u.traffic);
+            pthread_mutex_lock(&statusMutex);
+            if (learnClear(&ev->u.traffic, good))
+                call = matchTraffic(&ev->u.traffic, &dst);
+        }
         /* Groups selected: only their calls are played; an excluded
          * group's never are */
         if (call == TETRA_TRAFFIC_CLEAR
@@ -574,6 +657,7 @@ void tetraStatus_reset(void)
     pthread_mutex_lock(&statusMutex);
     memset(&status, 0, sizeof(status));
     memset(calls, 0, sizeof(calls));
+    memset(learnRun, 0, sizeof(learnRun));
     /* A new frequency is a new cell: nothing to follow from the old one */
     memset(&follow, 0, sizeof(follow));
     pthread_mutex_unlock(&statusMutex);

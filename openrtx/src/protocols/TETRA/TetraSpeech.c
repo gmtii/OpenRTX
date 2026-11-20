@@ -295,9 +295,22 @@ void tetraSpeech_traffic(const struct tetra_traffic *t,
     pthread_mutex_unlock(&queueMutex);
 }
 
+int tetraSpeech_probe(const struct tetra_traffic *t)
+{
+    /* The workspace is scratch, and rtx thread only as here */
+    struct tetra_speech sp;
+    return tetra_speech_decode(&channelWs, t, &sp);
+}
+
 #else /* CONFIG_TETRA_SPEECH */
 
 #include <string.h>
+
+int tetraSpeech_probe(const struct tetra_traffic *t)
+{
+    (void)t;
+    return 0;
+}
 
 bool tetraSpeech_playing(void)
 {
