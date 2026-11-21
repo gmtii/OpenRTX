@@ -1012,6 +1012,8 @@ static void _ui_drawTetraSds(ui_state_t *ui_state)
 static void _ui_drawRichMain(ui_state_t *ui_state, bool mem);
 #ifdef CONFIG_ACARS
 static bool _ui_drawAcarsPage(ui_state_t *ui_state);
+static void _ui_acarsSummary(char *buf, size_t len,
+                             const struct acarsMsg *m);
 #endif
 #ifdef CONFIG_AIS
 static bool _ui_drawAisPage(ui_state_t *ui_state);
@@ -3397,19 +3399,54 @@ static void _ui_richAcars(void)
         _ui_richPrint(RICH_PAD, ly, FONT_SIZE_6PT, TEXT_ALIGN_RIGHT, sky,
                       "%s %s", m.label, ago);
 
-        const char *name = acars_labelName(m.label);
+        char sum[ACARS_TEXT];
+        _ui_acarsSummary(sum, sizeof(sum), &m);
         _ui_richScroll(RICH_PAD + 3, by + 4,
                        CONFIG_SCREEN_WIDTH - 2 * RICH_PAD - 6, FONT_SIZE_6PT,
-                       color_white,
-                       m.text[0] ? m.text : (name ? name : "(no text)"));
+                       color_white, sum);
     }
 
     _ui_richMeter(89, sky, false, false);
 }
 
 /**
+ * A squitter's position, as sent, to the minute: "28 02N 016 34W".
+ */
+static void _ui_acarsPos(char *buf, size_t len,
+                         const struct acarsSquitter *q)
+{
+    int lat = (q->latMin < 0) ? -q->latMin : q->latMin;
+    int lon = (q->lonMin < 0) ? -q->lonMin : q->lonMin;
+    sniprintf(buf, len, "%02d %02d%c %03d %02d%c", lat / 60, lat % 60,
+              (q->latMin < 0) ? 'S' : 'N', lon / 60, lon % 60,
+              (q->lonMin < 0) ? 'W' : 'E');
+}
+
+/**
+ * One line summing up a message: its decoded fields if known, else its
+ * text, else its label's name.
+ */
+static void _ui_acarsSummary(char *buf, size_t len, const struct acarsMsg *m)
+{
+    struct acarsSquitter q;
+    if(acars_parseSquitter(m, &q))
+    {
+        sniprintf(buf, len, "Station %s/%s %lu.%03lu", q.iata, q.icao,
+                  (unsigned long)(q.freqKhz / 1000),
+                  (unsigned long)(q.freqKhz % 1000));
+        return;
+    }
+    const char *name = acars_labelName(m->label);
+    sniprintf(buf, len, "%s", m->text[0] ? m->text
+                                         : (name ? name : "(no text)"));
+}
+
+/**
  * ACARS message page, in place of the VFO or memory screen: one message
- * of the history whole, UP and DOWN to go through them.
+ * of the history whole, UP and DOWN to go through them. Who it is from or
+ * to and which way, its label by name, then what is known of its fields
+ * (a ground station's squitter: network, airport, position, frequency and
+ * distance), then its text.
  *
  * @return true if it was drawn.
  */
@@ -3418,6 +3455,7 @@ static bool _ui_drawAcarsPage(ui_state_t *ui_state)
     if((last_state.channel.mode != OPMODE_ACARS) || !ui_state->acars_page)
         return false;
 
+    static const color_t sky = { 95, 176, 255, 255 };
     static UI_BSS struct acarsMsg list[ACARS_MAX_MSGS];
     int n = acars_get(list, ACARS_MAX_MSGS);
     const fontSize_t font = FONT_SIZE_6PT;
@@ -3442,16 +3480,71 @@ static bool _ui_drawAcarsPage(ui_state_t *ui_state)
               ui_state->acars_sel + 1, n);
     gfx_print(pos, font, TEXT_ALIGN_RIGHT, yellow_fab413, "%s ago", ago);
 
+    // From or to: the registration and flight; an uplink without one is
+    // for every aircraft
     pos.y += step;
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s %s",
-              m->address[0] ? m->address : "-", m->flight);
-    gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey, "%s, blk %c",
-              m->downlink ? "down" : "up", m->blockId);
+    if(m->address[0] != '\0')
+    {
+        uint16_t w = gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s",
+                               m->address).x;
+        if(m->flight[0] != '\0')
+            gfx_print((point_t){ (int16_t)(pos.x + w + 6), pos.y }, font,
+                      TEXT_ALIGN_LEFT, yellow_fab413, "%s", m->flight);
+    }
+    else
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey,
+                  m->downlink ? "No registration" : "All aircraft");
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey, "%s",
+              m->downlink ? "Downlink" : "Uplink");
 
+    // The label by name, the block and whether the CRC repaired it
     const char *name = acars_labelName(m->label);
     pos.y += step;
-    gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s %s%s", m->label,
-              name ? name : "", m->repaired ? ", fixed" : "");
+    gfx_print(pos, font, TEXT_ALIGN_LEFT, sky, "%s %s", m->label,
+              name ? name : "");
+    gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey, "blk %c%s", m->blockId,
+              m->repaired ? " fixed" : "");
+
+    // A ground station's squitter, decoded; its text after, in grey
+    struct acarsSquitter q;
+    if(acars_parseSquitter(m, &q))
+    {
+        const char *net = acars_networkName(q.network);
+        char p[24];
+        _ui_acarsPos(p, sizeof(p), &q);
+        pos.y += step;
+        if(net != NULL)
+            gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+                      "Ground station, %s", net);
+        else
+            gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white,
+                      "Ground station, net %c", q.network);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s / %s", q.iata,
+                  q.icao);
+        gfx_print(pos, font, TEXT_ALIGN_RIGHT, info_grey, "station %u",
+                  q.station);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, color_white, "%s", p);
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, yellow_fab413, "%lu.%03lu MHz",
+                  (unsigned long)(q.freqKhz / 1000),
+                  (unsigned long)(q.freqKhz % 1000));
+#if (defined(CONFIG_AIS) || defined(CONFIG_DMR_RX) || defined(CONFIG_TETRA)) \
+    && defined(CONFIG_QTH_GRID)
+        char d[40];
+        _ui_qthDistance(d, sizeof(d), q.latMin / 60.0f, q.lonMin / 60.0f,
+                        false);
+        if(d[0] != '\0')
+        {
+            pos.y += step;
+            gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s", d);
+        }
+#endif
+        pos.y += step;
+        gfx_print(pos, font, TEXT_ALIGN_LEFT, info_grey, "%s", m->text);
+        return true;
+    }
 
     // The text, wrapped over the rest of the screen
     pos.y += step;

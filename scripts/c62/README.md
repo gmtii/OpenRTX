@@ -747,7 +747,15 @@ The main screen shows the messages received and the frames dropped on a
 bad CRC, the newest message's aircraft, flight, label and text. The green
 LED is on while a frame comes in, and the screen wakes for each message.
 **\*** opens the message list (16 kept, newest first): **UP/DOWN** pick a
-message, **\*** or **ESC** close it.
+message, **\*** or **ESC** close it. Each message shows its age, the
+registration and flight (`All aircraft` for an uplink to none), uplink or
+downlink, the label by name (`SQ Squitter`), the block and `fixed` if the
+CRC repaired it, then its text. A ground station's squitter (label `SQ`,
+version 2) is decoded: network (SITA, ARINC), airport (`TFS / GCTS`),
+station number, position to the minute (`28 02N 016 34W`), frequency
+(`136.975 MHz`) and, with `C62_QTH_GRID`, distance and bearing from the
+QTH; its text follows in grey. On the main screen a squitter reads
+`Station TFS/GCTS 136.975`.
 
 The decoder looks for the SYN SYN sync word at every sampling phase and
 under six tone-to-bit mappings, the coherent MSK of real transmitters
