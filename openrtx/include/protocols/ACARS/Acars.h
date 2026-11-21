@@ -91,6 +91,36 @@ void acars_getStats(struct acarsStats *out);
  */
 const char *acars_labelName(const char *label);
 
+/**
+ * A ground station's squitter (label SQ), version 2: the station tells
+ * where it is and on which frequency, "02XSTFSGCTS02802N01634WV136975".
+ */
+struct acarsSquitter {
+    uint8_t version;  /**< Squitter version */
+    char network;     /**< 'S' SITA, 'A' ARINC, as sent */
+    char iata[4];     /**< Airport, IATA code: "TFS" */
+    char icao[5];     /**< Airport, ICAO code: "GCTS" */
+    uint8_t station;  /**< Station number at the airport */
+    int16_t latMin;   /**< Latitude, minutes, + = north */
+    int16_t lonMin;   /**< Longitude, minutes, + = east */
+    uint32_t freqKhz; /**< VHF frequency of the station, kHz: 136975 */
+};
+
+/**
+ * Decode a squitter message.
+ *
+ * @param m: the message.
+ * @param sq: its fields, filled in.
+ * @return false if it is not a squitter of the version 2 layout.
+ */
+bool acars_parseSquitter(const struct acarsMsg *m, struct acarsSquitter *sq);
+
+/**
+ * Name of an ACARS network by its squitter letter: "SITA", "ARINC", or
+ * NULL if not known.
+ */
+const char *acars_networkName(char network);
+
 #ifdef __cplusplus
 }
 #endif

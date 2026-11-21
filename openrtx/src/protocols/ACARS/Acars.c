@@ -105,6 +105,7 @@ static const struct {
     { "21", "Delay" },
     { "C1", "Uplink, cockpit" },
     { "RA", "Uplink, printer" },
+    { "SQ", "Squitter" },
 };
 
 const char *acars_labelName(const char *label)
@@ -114,6 +115,71 @@ const char *acars_labelName(const char *label)
             return labels[i].name;
     }
     return NULL;
+}
+
+/* n decimal digits at s, -1 if one is not */
+static long digits(const char *s, int n)
+{
+    long v = 0;
+    for (int i = 0; i < n; i++) {
+        if (s[i] < '0' || s[i] > '9')
+            return -1;
+        v = v * 10 + (s[i] - '0');
+    }
+    return v;
+}
+
+static bool letters(const char *s, int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (!((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9')))
+            return false;
+    }
+    return true;
+}
+
+bool acars_parseSquitter(const struct acarsMsg *m, struct acarsSquitter *sq)
+{
+    /* 02 X S TFS GCTS 0 2802N 01634W V136975 */
+    const char *t = m->text;
+    if (strcmp(m->label, "SQ") != 0 || strlen(t) < 30)
+        return false;
+    long ver = digits(t, 2);
+    if (ver != 2 || t[2] != 'X' || !letters(t + 4, 7))
+        return false;
+    long st = digits(t + 11, 1);
+    long latD = digits(t + 12, 2), latM = digits(t + 14, 2);
+    long lonD = digits(t + 17, 3), lonM = digits(t + 20, 2);
+    long khz = digits(t + 24, 6);
+    if (st < 0 || latD < 0 || latM < 0 || lonD < 0 || lonM < 0 || khz < 0
+        || (t[16] != 'N' && t[16] != 'S') || (t[22] != 'E' && t[22] != 'W')
+        || t[23] != 'V' || latD > 90 || lonD > 180 || latM > 59
+        || lonM > 59)
+        return false;
+
+    sq->version = (uint8_t)ver;
+    sq->network = t[3];
+    memcpy(sq->iata, t + 4, 3);
+    sq->iata[3] = '\0';
+    memcpy(sq->icao, t + 7, 4);
+    sq->icao[4] = '\0';
+    sq->station = (uint8_t)st;
+    sq->latMin = (int16_t)((latD * 60 + latM) * (t[16] == 'S' ? -1 : 1));
+    sq->lonMin = (int16_t)((lonD * 60 + lonM) * (t[22] == 'W' ? -1 : 1));
+    sq->freqKhz = (uint32_t)khz;
+    return true;
+}
+
+const char *acars_networkName(char network)
+{
+    switch (network) {
+        case 'S':
+            return "SITA";
+        case 'A':
+            return "ARINC";
+        default:
+            return NULL;
+    }
 }
 
 /* CRC-16 CCITT, reflected (0x8408), initial value 0 */
