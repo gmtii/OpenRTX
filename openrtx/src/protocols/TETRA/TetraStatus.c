@@ -80,9 +80,26 @@ static uint8_t learnRun[5]; /* Per timeslot 1..4; under statusMutex */
  */
 static bool learnOn;
 
+/*
+ * Play the encrypted calls too, and those whose encryption is not known:
+ * end-to-end encrypted speech plays as noise, air-encrypted traffic as
+ * near silence. Off by default; under statusMutex.
+ */
+static bool playEncrypted;
+
+/*
+ * Uplink: whether the last call signalling a radio sent flagged
+ * encryption (U-SETUP, U-TX-DEMAND), and when; the uplink traffic does not
+ * tell. Under statusMutex.
+ */
+#define UL_CIPHER_MS 30000
+static bool ulEncrypted;
+static long long ulCipherAt;
+
 struct knownCall {
     bool used;
     bool learned; /* Its set-up not heard: taken as clear from its speech */
+    bool cipherKnown; /* A set-up or connect told whether it is encrypted */
     uint16_t id;
     uint8_t usageMarker; /* 0 if unknown */
     uint8_t timeslots;   /* Bit 0 = TN1, 0 if unknown */
@@ -211,6 +228,13 @@ static void trackCall(const struct tetra_call *c)
     if (c->timeslots != 0)
         k->timeslots = c->timeslots;
     k->encrypted |= c->encrypted;
+    /* Only a set-up or a connect carries the basic service information
+     * with the encryption flag: libtetra skips the encryption control of
+     * D-TX GRANTED, so a call first heard by its grant may be end-to-end
+     * encrypted with the flag clear */
+    if (c->what == TETRA_CALL_SETUP || c->what == TETRA_CALL_CONNECT
+        || c->encrypted)
+        k->cipherKnown = true;
     k->data = (c->circuit_type != 0);
     if (c->dst_ssi != 0)
         k->dst = c->dst_ssi;
@@ -235,6 +259,19 @@ static void trackCall(const struct tetra_call *c)
         CALL_PRINT("TETRA call %u to %lu: usage marker %u, timeslots 0x%x%s\n",
                    k->id, (unsigned long)c->dst_ssi, k->usageMarker,
                    k->timeslots, k->encrypted ? ", encrypted" : "");
+}
+
+/**
+ * What a known call's traffic is: clear only if a set-up or a connect said
+ * so, or its speech did (late calls).
+ */
+static enum tetraTrafficCall callKind(const struct knownCall *k)
+{
+    if (k->encrypted)
+        return TETRA_TRAFFIC_ENCRYPTED;
+    if (!k->cipherKnown && !k->learned)
+        return TETRA_TRAFFIC_UNKNOWN;
+    return k->data ? TETRA_TRAFFIC_DATA : TETRA_TRAFFIC_CLEAR;
 }
 
 /**
@@ -265,21 +302,19 @@ static enum tetraTrafficCall matchTraffic(const struct tetra_traffic *t,
             if (k->learned)
                 k->last = now;
             *dst = k->dst;
-            if (k->encrypted)
-                return TETRA_TRAFFIC_ENCRYPTED;
-            return k->data ? TETRA_TRAFFIC_DATA : TETRA_TRAFFIC_CLEAR;
+            return callKind(k);
         }
     }
 
-    /* libtetra matched it to a call of its own: its destination, if the
-     * call is known here by its identifier */
-    if (t->call_id != 0 || t->talker_ssi != 0) {
+    /* libtetra matched it to a call of its own: as the call known here by
+     * its identifier; one not known here is not known to be clear */
+    if (t->call_id != 0) {
         for (int i = 0; i < MAX_CALLS; i++) {
-            if (calls[i].used && calls[i].id == t->call_id)
+            if (calls[i].used && calls[i].id == t->call_id) {
                 *dst = calls[i].dst;
+                return callKind(&calls[i]);
+            }
         }
-        return (t->circuit_type != 0) ? TETRA_TRAFFIC_DATA :
-                                        TETRA_TRAFFIC_CLEAR;
     }
 
     return TETRA_TRAFFIC_UNKNOWN;
@@ -308,6 +343,22 @@ static bool learnClear(const struct tetra_traffic *t, int good)
     if (++learnRun[tn] < LEARN_SLOTS)
         return false;
     learnRun[tn] = 0;
+
+    /* A call known on the slot, its encryption not known: taken as clear */
+    const uint8_t slot = (uint8_t)(1u << (tn - 1));
+    for (int i = 0; i < MAX_CALLS; i++) {
+        struct knownCall *l = &calls[i];
+        if (l->used && !l->encrypted
+            && ((l->timeslots & slot)
+                || (l->usageMarker != 0
+                    && l->usageMarker == t->usage_marker))) {
+            l->learned = true;
+            l->last = getTick();
+            CALL_PRINT("TETRA: clear speech on timeslot %u, call %u "
+                       "encryption not heard: played\n", tn, l->id);
+            return true;
+        }
+    }
 
     /* A free entry, else the call with the oldest signalling */
     struct knownCall *k = &calls[0];
@@ -357,6 +408,14 @@ static void followCall(const struct tetra_call *c)
     if (follow.active || c->carrier == 0xffff || c->encrypted
         || c->circuit_type != 0)
         return;
+    /* Only a call known to be clear, unless encrypted ones are played */
+    if (!playEncrypted) {
+        for (int i = 0; i < MAX_CALLS; i++) {
+            if (calls[i].used && calls[i].id == c->call_id
+                && callKind(&calls[i]) != TETRA_TRAFFIC_CLEAR)
+                return;
+        }
+    }
     /* Another call is being played here: stay with it (see lockTn) */
     if (lockHeld(getTick()))
         return;
@@ -498,10 +557,17 @@ static void ulNote(uint32_t src, uint32_t dst, bool group, uint8_t what)
  */
 static void onUplink(const struct tetra_event *ev)
 {
-    if (ev->type == TETRA_EV_TRAFFIC)
-        tetraSpeech_traffic(&ev->u.traffic, ev->u.traffic.encrypted
-                                                ? TETRA_TRAFFIC_ENCRYPTED
-                                                : TETRA_TRAFFIC_CLEAR);
+    if (ev->type == TETRA_EV_TRAFFIC) {
+        /* Encrypted if air encryption was signalled, or the last call
+         * signalling a radio sent, lately, flagged encryption */
+        pthread_mutex_lock(&statusMutex);
+        bool enc = ev->u.traffic.encrypted
+                || (ulEncrypted && getTick() - ulCipherAt < UL_CIPHER_MS);
+        bool play = !enc || playEncrypted;
+        pthread_mutex_unlock(&statusMutex);
+        tetraSpeech_traffic(&ev->u.traffic, play ? TETRA_TRAFFIC_CLEAR
+                                                 : TETRA_TRAFFIC_ENCRYPTED);
+    }
 
     pthread_mutex_lock(&statusMutex);
     switch (ev->type) {
@@ -512,6 +578,12 @@ static void onUplink(const struct tetra_event *ev)
                 what = TETRA_UL_SETUP;
             else if (c->what == TETRA_CALL_TX_DEMAND)
                 what = TETRA_UL_TX_DEMAND;
+            /* Both carry the encryption flag */
+            if (c->what == TETRA_CALL_SETUP
+                || c->what == TETRA_CALL_TX_DEMAND) {
+                ulEncrypted = c->encrypted;
+                ulCipherAt = getTick();
+            }
             tetraHeard_call(c);
             ulNote(c->src_ssi, c->dst_ssi, c->group, what);
             break;
@@ -546,6 +618,8 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
 
     /* Speech first, outside the status lock */
     enum tetraTrafficCall call = TETRA_TRAFFIC_UNKNOWN;
+    /* What a call played as clear was, if encrypted or not known */
+    enum tetraTrafficCall playedEnc = TETRA_TRAFFIC_CLEAR;
     if (ev->type == TETRA_EV_TRAFFIC) {
         uint32_t dst;
         pthread_mutex_lock(&statusMutex);
@@ -558,6 +632,13 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
             pthread_mutex_lock(&statusMutex);
             if (learnClear(&ev->u.traffic, good))
                 call = matchTraffic(&ev->u.traffic, &dst);
+        }
+        /* Encrypted calls played too, if asked: as clear ones from here,
+         * the call card still telling */
+        if (playEncrypted && (call == TETRA_TRAFFIC_ENCRYPTED
+                              || call == TETRA_TRAFFIC_UNKNOWN)) {
+            playedEnc = call;
+            call = TETRA_TRAFFIC_CLEAR;
         }
         /* Groups selected: only their calls are played; an excluded
          * group's never are */
@@ -622,8 +703,10 @@ void tetraStatus_onEvent(void *user, const struct tetra_event *ev)
             }
             if (t->talker_ssi != 0)
                 status.talker = t->talker_ssi;
-            status.callEncrypted |= (call == TETRA_TRAFFIC_ENCRYPTED);
-            status.callUnknown = (call == TETRA_TRAFFIC_UNKNOWN);
+            status.callEncrypted |= (call == TETRA_TRAFFIC_ENCRYPTED)
+                                 || (playedEnc == TETRA_TRAFFIC_ENCRYPTED);
+            status.callUnknown = (call == TETRA_TRAFFIC_UNKNOWN)
+                              || (playedEnc == TETRA_TRAFFIC_UNKNOWN);
             status.callFiltered = (call == TETRA_TRAFFIC_FILTERED);
             status.lastTrafficMarker = t->usage_marker;
             status.lastTrafficTn = t->time.tn;
@@ -830,9 +913,14 @@ void tetraStatus_setLateCalls(bool on)
     pthread_mutex_lock(&statusMutex);
     learnOn = on;
     if (!on) {
-        /* The calls taken from their speech are dropped */
+        /* The calls taken from their speech are dropped; those signalled
+         * go back to their encryption not known */
         for (int i = 0; i < MAX_CALLS; i++) {
-            if (calls[i].learned)
+            if (!calls[i].learned)
+                continue;
+            if (calls[i].cipherKnown || calls[i].dst != 0)
+                calls[i].learned = false;
+            else
                 calls[i].used = false;
         }
         memset(learnRun, 0, sizeof(learnRun));
@@ -845,6 +933,21 @@ bool tetraStatus_lateCalls(void)
 {
     pthread_mutex_lock(&statusMutex);
     bool on = learnOn;
+    pthread_mutex_unlock(&statusMutex);
+    return on;
+}
+
+void tetraStatus_setPlayEncrypted(bool on)
+{
+    pthread_mutex_lock(&statusMutex);
+    playEncrypted = on;
+    pthread_mutex_unlock(&statusMutex);
+}
+
+bool tetraStatus_playEncrypted(void)
+{
+    pthread_mutex_lock(&statusMutex);
+    bool on = playEncrypted;
     pthread_mutex_unlock(&statusMutex);
     return on;
 }

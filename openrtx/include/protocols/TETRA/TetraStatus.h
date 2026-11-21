@@ -241,6 +241,19 @@ void tetraStatus_setLateCalls(bool on);
 bool tetraStatus_lateCalls(void);
 
 /**
+ * Play the encrypted calls too, and those whose encryption is not known
+ * (their set-up or connect not heard): end-to-end encrypted speech plays as
+ * noise. Off by default; the call card still shows them as encrypted.
+ * Kept until changed, across frequencies.
+ */
+void tetraStatus_setPlayEncrypted(bool on);
+
+/**
+ * @return true if the encrypted calls are played.
+ */
+bool tetraStatus_playEncrypted(void);
+
+/**
  * @return number of groups excluded.
  */
 int tetraStatus_excludedCount(void);
