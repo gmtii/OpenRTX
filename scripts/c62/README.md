@@ -233,9 +233,9 @@ none. The diagnostics page shows it (`AFC +1580`); **Settings > TETRA >
 AFC** turns it off. Other modes get no correction.
 
 **Settings > TETRA** gathers the TETRA options, each turned on or off
-with ENTER: **Roaming** (below), **AFC** (above) and **Late calls**
-(below). Roaming and AFC are kept across power cycles; Late calls is off
-at power on.
+with ENTER: **Roaming** (below), **AFC** (above), **Late calls** and
+**Encrypted** (below). Roaming and AFC are kept across power cycles; Late
+calls and Encrypted are off (Mute) at power on.
 
 Speech: clear (not encrypted) speech is played on the speaker. libtetra
 decodes each traffic slot into two speech frames, and
@@ -251,8 +251,12 @@ off.
 
 Only calls whose signalling was received in clear are played, as on the
 ESP32-P4 SDR: end-to-end encrypted calls (flagged in their setup) show
-`Encrypted`. Traffic of a call whose set-up was not heard, as the calls
-under way when the radio tunes in or syncs, shows `Encrypted?` and stays
+`Encrypted`. A call is clear only when its set-up (D-SETUP) or connect
+(D-CONNECT) was heard and does not flag encryption: those are the only
+messages carrying the flag that libtetra reads, as it skips the
+encryption control of D-TX GRANTED. Traffic of a call whose set-up was
+not heard, as the calls under way when the radio tunes in or syncs, or
+known only by a transmission grant, shows `Encrypted?` and stays
 silent. **Late calls** in Settings > TETRA, or **#** on the calls page
 (5), plays such calls too (the page header shows `late calls on`; off at
 power on): its speech is decoded without playing it, and after three full
@@ -265,6 +269,13 @@ speech, however, is encrypted before the channel coding and passes the
 CRC as clear speech does: with this on, an end-to-end encrypted call whose
 set-up was missed is played as noise. Such a call has no known group: with
 groups selected it is not played.
+
+**Encrypted** in Settings > TETRA (`Mute` or `Play`) plays the encrypted
+calls too, and those whose encryption is not known: end-to-end encrypted
+speech plays as noise, air-encrypted traffic as near silence. The call
+card still shows `Encrypted` or `Encrypted?`. On the uplink, speech is
+taken as encrypted for 30 s after a radio's call set-up or request to
+talk flags encryption, and played as clear otherwise.
 
 A clear speech call set up on another carrier of the cell is followed
 there: the radio tunes to that carrier, one call at a time, and comes back

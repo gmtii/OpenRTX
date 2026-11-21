@@ -1267,6 +1267,11 @@ static int _ui_getTetraValueName(char *buf, uint8_t max_len, uint8_t index)
         case T_LATE_CALLS:
             on = tetraStatus_lateCalls();
             break;
+        case T_ENCRYPTED:
+            // Encrypted calls: played or muted
+            sniprintf(buf, max_len, "%s", tetraStatus_playEncrypted()
+                                              ? "Play" : "Mute");
+            return 0;
     }
     sniprintf(buf, max_len, "%s", on ? currentLanguage->on
                                      : currentLanguage->off);

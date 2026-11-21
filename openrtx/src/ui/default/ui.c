@@ -217,6 +217,7 @@ const char *settings_tetra_items[] =
     "AFC",
 #endif
     "Late calls",
+    "Encrypted",
 };
 const uint8_t settings_tetra_num = sizeof(settings_tetra_items)
                                  / sizeof(settings_tetra_items[0]);
@@ -3713,6 +3714,15 @@ void ui_updateFSM(bool *sync_rtx)
                         {
                             const bool on = !tetraStatus_lateCalls();
                             tetraStatus_setLateCalls(on);
+                            vp_beep(on ? BEEP_FUNCTION_LATCH_ON
+                                       : BEEP_FUNCTION_LATCH_OFF,
+                                    LONG_BEEP);
+                            break;
+                        }
+                        case T_ENCRYPTED:
+                        {
+                            const bool on = !tetraStatus_playEncrypted();
+                            tetraStatus_setPlayEncrypted(on);
                             vp_beep(on ? BEEP_FUNCTION_LATCH_ON
                                        : BEEP_FUNCTION_LATCH_OFF,
                                     LONG_BEEP);

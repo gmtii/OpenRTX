@@ -183,6 +183,7 @@ enum settingsTetraItems
     T_AFC,
 #endif
     T_LATE_CALLS,
+    T_ENCRYPTED,
 };
 #endif
 
