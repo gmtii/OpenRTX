@@ -1540,79 +1540,107 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
     }
 #endif
 
-#if defined(CONFIG_UI_NO_KEYBOARD)
-        if (ui_state->macro_menu_selected == 4)
-#endif // CONFIG_UI_NO_KEYBOARD
-    gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER,
-              yellow_fab413, "5");
-
-    char mode_str[12] = "";
-    switch(last_state.channel.mode)
-    {
-        case OPMODE_FM:
-            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "         FM");
-            break;
-        case OPMODE_DMR:
-            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          DMR");
-            break;
+    /*
+     * 5 and the mode, 6 and the power: measured, so that a long mode name
+     * does not run into the keys. The power goes to the right edge, the
+     * mode in the middle of the room left, in a smaller font or shortened
+     * if it does not fit.
+     */
+    static const struct { uint8_t mode; const char *name, *shortName; }
+    modeNames[] = {
+        { OPMODE_FM, "FM", "FM" },
+        { OPMODE_DMR, "DMR", "DMR" },
 #ifdef CONFIG_M17
-        case OPMODE_M17:
-            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          M17");
-            break;
+        { OPMODE_M17, "M17", "M17" },
 #endif
 #ifdef CONFIG_TETRA
-        case OPMODE_TETRA:
-            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          T");
-            break;
+        { OPMODE_TETRA, "TETRA", "T" },
 #endif
 #ifdef CONFIG_AM
-        case OPMODE_AM:
-            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          AM");
-            break;
+        { OPMODE_AM, "AM", "AM" },
 #endif
 #ifdef CONFIG_ACARS
-        case OPMODE_ACARS:
-            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          ACARS");
-            break;
+        { OPMODE_ACARS, "ACARS", "ACR" },
 #endif
 #ifdef CONFIG_AIS
-        case OPMODE_AIS:
-            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          AIS");
-            break;
+        { OPMODE_AIS, "AIS", "AIS" },
 #endif
 #ifdef CONFIG_NXDN
-        case OPMODE_NXDN:
-            gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER, color_white, "          NXDN");
-            break;
+        { OPMODE_NXDN, "NXDN", "NX" },
 #endif
+    };
+    const char *mode_name = "";
+    const char *mode_short = "";
+    for(size_t i = 0; i < sizeof(modeNames) / sizeof(modeNames[0]); i++)
+    {
+        if(modeNames[i].mode == last_state.channel.mode)
+        {
+            mode_name = modeNames[i].name;
+            mode_short = modeNames[i].shortName;
+        }
     }
-
-    gfx_print(pos_2, layout.top_font, TEXT_ALIGN_CENTER,
-              color_white, mode_str);
-
-#if defined(CONFIG_UI_NO_KEYBOARD)
-        if (ui_state->macro_menu_selected == 5)
-#endif // CONFIG_UI_NO_KEYBOARD
-    gfx_print(pos_2, layout.top_font, TEXT_ALIGN_RIGHT,
-              yellow_fab413, "6        ");
 
     // Compute x.y format for TX power avoiding to pull in floating point math.
     // Remember that power is expressed in mW!
     unsigned int power_int = (last_state.channel.power / 1000);
     unsigned int power_dec = (last_state.channel.power % 1000) / 100;
-
+    char power_str[10];
+    // Smaller font to fit larger strings on screen (i.e "2.5W")
+    fontSize_t power_font = layout.top_font;
     if (power_dec == 0)
-    {
-        // Print power output as an integer without a decimal (i.e "5W")
-        gfx_print(pos_2, layout.top_font, TEXT_ALIGN_RIGHT,
-                  color_white, "%dW", power_int);
-    }
+        sniprintf(power_str, sizeof(power_str), "%dW", power_int);
     else
     {
-        // Smaller font to fit larger strings on screen (i.e "2.5W")
-        gfx_print(pos_2, layout.top_font - 1, TEXT_ALIGN_RIGHT,
-                  color_white, "%d.%dW", power_int, power_dec);
+        sniprintf(power_str, sizeof(power_str), "%d.%dW", power_int,
+                  power_dec);
+        power_font = layout.top_font - 1;
     }
+
+    const int16_t gap = 4;
+    const int16_t right = CONFIG_SCREEN_WIDTH - layout.horizontal_pad;
+    const int16_t x_power = right - gfx_getTextWidth(power_font, power_str);
+    const int16_t x_6 = x_power - gap - gfx_getTextWidth(layout.top_font, "6");
+    // What row 2 already holds on the left: 4, and the bandwidth in FM
+    int16_t left = pos_2.x + gfx_getTextWidth(layout.top_font, "4");
+    if (last_state.channel.mode == OPMODE_FM)
+        left = pos_2.x + gfx_getTextWidth(layout.top_font, "  BW12.5");
+    left += 2 * gap;
+
+    // The largest form of the mode name that fits between them
+    const int16_t w_5 = gfx_getTextWidth(layout.top_font, "5") + gap;
+    const int16_t room = (x_6 - 2 * gap) - left;
+    fontSize_t mode_font = layout.top_font;
+    const char *mode_shown = mode_name;
+    if (w_5 + gfx_getTextWidth(mode_font, mode_shown) > room)
+        mode_font = layout.top_font - 1;
+    if (w_5 + gfx_getTextWidth(mode_font, mode_shown) > room)
+    {
+        mode_font = layout.top_font;
+        mode_shown = mode_short;
+    }
+    const int16_t w_mode = w_5 + gfx_getTextWidth(mode_font, mode_shown);
+    // Centred on the screen if it fits there, else as far right as it goes
+    int16_t x_5 = (CONFIG_SCREEN_WIDTH - w_mode) / 2;
+    if (x_5 + w_mode > x_6 - 2 * gap)
+        x_5 = x_6 - 2 * gap - w_mode;
+    if (x_5 < left)
+        x_5 = left;
+
+#if defined(CONFIG_UI_NO_KEYBOARD)
+        if (ui_state->macro_menu_selected == 4)
+#endif // CONFIG_UI_NO_KEYBOARD
+    gfx_print((point_t){ x_5, pos_2.y }, layout.top_font, TEXT_ALIGN_LEFT,
+              yellow_fab413, "5");
+    gfx_print((point_t){ (int16_t)(x_5 + w_5), pos_2.y }, mode_font,
+              TEXT_ALIGN_LEFT, color_white, "%s", mode_shown);
+
+#if defined(CONFIG_UI_NO_KEYBOARD)
+        if (ui_state->macro_menu_selected == 5)
+#endif // CONFIG_UI_NO_KEYBOARD
+    gfx_print((point_t){ x_6, pos_2.y }, layout.top_font, TEXT_ALIGN_LEFT,
+              yellow_fab413, "6");
+    gfx_print((point_t){ x_power, pos_2.y }, power_font, TEXT_ALIGN_LEFT,
+              color_white, "%s", power_str);
 
     // Third row
 #if defined(CONFIG_UI_NO_KEYBOARD)
