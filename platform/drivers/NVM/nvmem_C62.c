@@ -42,6 +42,9 @@
 #ifdef CONFIG_TETRA_AFC
 #define AFC_ADDR (0x4000 + sizeof(int16_t))
 #endif
+#ifdef CONFIG_BOOT_PIN
+#define PIN_ADDR (0x5000 + 2 * sizeof(uint16_t))
+#endif
 
 /*
  * The flash takes writes in whole blocks of WRITE_BLOCK bytes: records are
@@ -124,6 +127,10 @@ static uint16_t settingsCrc;
 static uint16_t vfoCrc;
 #ifdef CONFIG_DMR_TX
 static uint16_t dmrCrc;
+#endif
+#ifdef CONFIG_BOOT_PIN
+static uint16_t pinStored;
+static bool pinKnown;
 #endif
 #ifdef CONFIG_TETRA_AFC
 static int16_t afcStored;
@@ -349,6 +356,54 @@ int nvm_writeTetraAfc(int16_t hz)
         afcKnown = true;
     }
     printk("NVM: saved TETRA frequency correction %d Hz (%d)\n", hz, ret);
+    return ret;
+}
+#endif
+
+#ifdef CONFIG_BOOT_PIN
+/* The code, and its complement to tell a record of it from a stray one */
+union pinRecord {
+    struct {
+        uint16_t pin;
+        uint16_t check;
+    } v;
+    uint8_t raw[PADDED(2 * sizeof(uint16_t))];
+};
+
+int nvm_readBootPin(uint16_t *pin)
+{
+    if (!ready)
+        return -1;
+
+    union pinRecord rec = { 0 };
+    int ret = nvm_read(1, 0, PIN_ADDR, rec.raw, sizeof(rec.raw));
+    if (ret < 0 || rec.v.check != (uint16_t)~rec.v.pin
+        || (rec.v.pin > 9999 && rec.v.pin != BOOT_PIN_OFF))
+        return -1;
+    *pin = rec.v.pin;
+    pinStored = rec.v.pin;
+    pinKnown = true;
+    return 0;
+}
+
+int nvm_writeBootPin(uint16_t pin)
+{
+    if (!ready)
+        return -1;
+    if (pinKnown && pin == pinStored)
+        return 0;
+
+    union pinRecord rec;
+    memset(&rec, 0, sizeof(rec));
+    rec.v.pin = pin;
+    rec.v.check = (uint16_t)~pin;
+    int ret = nvm_write(1, 0, PIN_ADDR, rec.raw, sizeof(rec.raw));
+    if (ret == 0) {
+        pinStored = pin;
+        pinKnown = true;
+    }
+    printk("NVM: saved the power-on code, %s (%d)\n",
+           (pin == BOOT_PIN_OFF) ? "off" : "on", ret);
     return ret;
 }
 #endif
