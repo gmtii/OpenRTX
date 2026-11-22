@@ -19,6 +19,7 @@
 #include "core/voicePromptUtils.h"
 #ifdef CONFIG_TETRA
 #include "protocols/TETRA/TetraStatus.h"
+#include "protocols/TETRA/TetraSpeech.h"
 #endif
 
 #ifdef PLATFORM_TTWRPLUS
@@ -1266,6 +1267,9 @@ static int _ui_getTetraValueName(char *buf, uint8_t max_len, uint8_t index)
 #endif
         case T_LATE_CALLS:
             on = tetraStatus_lateCalls();
+            break;
+        case T_TONES:
+            on = tetraSpeech_tones();
             break;
         case T_ENCRYPTED:
             // Encrypted calls: played or muted

@@ -184,6 +184,7 @@ enum settingsTetraItems
 #endif
     T_LATE_CALLS,
     T_ENCRYPTED,
+    T_TONES,
 };
 #endif
 

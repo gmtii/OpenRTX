@@ -77,6 +77,7 @@
 #include "protocols/TETRA/TetraStatus.h"
 #include "protocols/TETRA/TetraScan.h"
 #include "protocols/TETRA/TetraRoam.h"
+#include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraSds.h"
 #endif
 #ifdef CONFIG_DMR_RX
@@ -218,6 +219,7 @@ const char *settings_tetra_items[] =
 #endif
     "Late calls",
     "Encrypted",
+    "Tones",
 };
 const uint8_t settings_tetra_num = sizeof(settings_tetra_items)
                                  / sizeof(settings_tetra_items[0]);
@@ -3723,6 +3725,15 @@ void ui_updateFSM(bool *sync_rtx)
                         {
                             const bool on = !tetraStatus_playEncrypted();
                             tetraStatus_setPlayEncrypted(on);
+                            vp_beep(on ? BEEP_FUNCTION_LATCH_ON
+                                       : BEEP_FUNCTION_LATCH_OFF,
+                                    LONG_BEEP);
+                            break;
+                        }
+                        case T_TONES:
+                        {
+                            const bool on = !tetraSpeech_tones();
+                            tetraSpeech_setTones(on);
                             vp_beep(on ? BEEP_FUNCTION_LATCH_ON
                                        : BEEP_FUNCTION_LATCH_OFF,
                                     LONG_BEEP);

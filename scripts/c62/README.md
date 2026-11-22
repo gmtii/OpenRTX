@@ -233,9 +233,9 @@ none. The diagnostics page shows it (`AFC +1580`); **Settings > TETRA >
 AFC** turns it off. Other modes get no correction.
 
 **Settings > TETRA** gathers the TETRA options, each turned on or off
-with ENTER: **Roaming** (below), **AFC** (above), **Late calls** and
-**Encrypted** (below). Roaming and AFC are kept across power cycles; Late
-calls and Encrypted are off (Mute) at power on.
+with ENTER: **Roaming** (below), **AFC** (above), **Late calls**,
+**Encrypted** and **Tones** (below). Roaming and AFC are kept across power
+cycles; Late calls and Encrypted are off (Mute) at power on, Tones on.
 
 Speech: clear (not encrypted) speech is played on the speaker. libtetra
 decodes each traffic slot into two speech frames, and
@@ -276,6 +276,17 @@ speech plays as noise, air-encrypted traffic as near silence. The call
 card still shows `Encrypted` or `Encrypted?`. On the uplink, speech is
 taken as encrypted for 30 s after a radio's call set-up or request to
 talk flags encryption, and played as clear otherwise.
+
+**Tones** in Settings > TETRA plays short sounds on the speaker, ahead of
+the speech: one when a call that would be played is set up (speech,
+clear or with Encrypted on Play, through the group selection and
+exclusions), another one instead for a priority or emergency call
+(priority 12 to 15), one when that call is released, and one when the
+roaming tunes another cell. They are made from WAV files by
+`scripts/c62/tetra_tones.py` (`snd_call_setup.wav`,
+`snd_call_released.wav`, `snd_priotity.wav`, `snd_roaming.wav`, any rate,
+16-bit), into `openrtx/src/protocols/TETRA/TetraTones.c`: 8 kHz mono,
+peak normalised, silence at the ends cut.
 
 A clear speech call set up on another carrier of the cell is followed
 there: the radio tunes to that carrier, one call at a time, and comes back
