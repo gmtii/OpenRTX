@@ -31,6 +31,11 @@ typedef enum
 }
 display_timer_t;
 
+#ifdef CONFIG_BOOT_PIN
+/* No code asked at power on (state_t.boot_pin) */
+#define BOOT_PIN_OFF 0xFFFF
+#endif
+
 typedef struct
 {
     uint8_t brightness;           // Display brightness

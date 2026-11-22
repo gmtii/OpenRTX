@@ -50,6 +50,10 @@ typedef struct {
 #ifdef CONFIG_TETRA_AFC
     int16_t tetra_afc; // TETRA frequency correction learned, Hz
 #endif
+#ifdef CONFIG_BOOT_PIN
+    uint16_t boot_pin; // Code asked at power on, 0-9999, BOOT_PIN_OFF none
+    bool boot_locked;  // Waiting for it: no reception, no transmission
+#endif
     gps_t gps_data;
     bool gps_set_time;
     bool gpsDetected;

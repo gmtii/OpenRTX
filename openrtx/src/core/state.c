@@ -56,6 +56,12 @@ void state_init()
     if (nvm_readTetraAfc(&state.tetra_afc) < 0)
         state.tetra_afc = 0;
 #endif
+#ifdef CONFIG_BOOT_PIN
+    if (nvm_readBootPin(&state.boot_pin) < 0)
+        state.boot_pin = BOOT_PIN_OFF;
+    // The UI asks for it before anything else (see ui_init())
+    state.boot_locked = (state.boot_pin != BOOT_PIN_OFF);
+#endif
 
 /*
      * Initialise remaining fields
@@ -94,6 +100,9 @@ void state_terminate()
 #endif
 #ifdef CONFIG_TETRA_AFC
     nvm_writeTetraAfc(state.tetra_afc);
+#endif
+#ifdef CONFIG_BOOT_PIN
+    nvm_writeBootPin(state.boot_pin);
 #endif
     pthread_mutex_destroy(&state_mutex);
 }
@@ -134,6 +143,9 @@ static void saveOnChange()
 #ifdef CONFIG_TETRA_AFC
     int16_t afc = state.tetra_afc;
 #endif
+#ifdef CONFIG_BOOT_PIN
+    uint16_t pin = state.boot_pin;
+#endif
     pthread_mutex_unlock(&state_mutex);
 
     // Never store a brightness of 0, as in state_terminate()
@@ -147,6 +159,9 @@ static void saveOnChange()
 #endif
 #ifdef CONFIG_TETRA_AFC
     crc ^= (uint16_t)afc * 40503u;
+#endif
+#ifdef CONFIG_BOOT_PIN
+    crc ^= ((uint32_t)pin + 1) * 2246822519u;
 #endif
     if (!crcKnown) {
         savedCrc = pendingCrc = crc;
@@ -171,6 +186,10 @@ static void saveOnChange()
 #ifdef CONFIG_TETRA_AFC
     if (ret == 0)
         ret = nvm_writeTetraAfc(afc);
+#endif
+#ifdef CONFIG_BOOT_PIN
+    if (ret == 0)
+        ret = nvm_writeBootPin(pin);
 #endif
     if (ret == 0)
         savedCrc = crc;

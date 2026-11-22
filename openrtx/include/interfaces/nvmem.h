@@ -237,6 +237,25 @@ int nvm_readTetraAfc(int16_t *hz);
 int nvm_writeTetraAfc(int16_t hz);
 #endif
 
+#ifdef CONFIG_BOOT_PIN
+/**
+ * Read the code asked at power on, kept apart from the settings so that
+ * their layout stays.
+ *
+ * @param pin: the code, 0-9999, or BOOT_PIN_OFF.
+ * @return 0 on success, -1 if none is stored.
+ */
+int nvm_readBootPin(uint16_t *pin);
+
+/**
+ * Write the code asked at power on, if it changed.
+ *
+ * @param pin: the code, 0-9999, or BOOT_PIN_OFF.
+ * @return 0 on success, -1 on failure.
+ */
+int nvm_writeBootPin(uint16_t pin);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

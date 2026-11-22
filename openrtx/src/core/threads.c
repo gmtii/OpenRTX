@@ -83,6 +83,14 @@ void *ui_threadFunc(void *arg)
 
             // Enable Tx if channel allows it and we are in UI main screen
             rtx_cfg.txDisable = state.channel.rx_only || state.txDisable;
+#ifdef CONFIG_BOOT_PIN
+            // The power-on code not given yet: no reception, no transmission
+            if(state.boot_locked)
+            {
+                rtx_cfg.opMode    = OPMODE_NONE;
+                rtx_cfg.txDisable = true;
+            }
+#endif
 
             // Copy new M17 CAN, source and destination addresses
             rtx_cfg.can = state.settings.m17_can;
