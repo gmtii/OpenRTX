@@ -191,7 +191,8 @@ if(C62_TETRA)
     target_compile_definitions(app PRIVATE CONFIG_TETRA_SPEECH)
   endif()
   target_sources(app PRIVATE
-    ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraSpeech.c)
+    ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraSpeech.c
+    ${OPENRTX_ROOT}/openrtx/src/protocols/TETRA/TetraTones.c)
 endif()
 
 if(C62_DMR)

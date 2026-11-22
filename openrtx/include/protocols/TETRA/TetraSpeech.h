@@ -99,6 +99,23 @@ void tetraSpeech_traffic(const struct tetra_traffic *t,
  */
 int tetraSpeech_probe(const struct tetra_traffic *t);
 
+/**
+ * Play a call tone on the speaker (enum tetraTone, TetraTones.h), ahead of
+ * the speech queued, if the tones are on. A tone asked while another plays
+ * replaces it. From any thread.
+ */
+void tetraSpeech_tone(int tone);
+
+/**
+ * Call tones on or off; on by default. Kept until changed.
+ */
+void tetraSpeech_setTones(bool on);
+
+/**
+ * @return true if the call tones are played.
+ */
+bool tetraSpeech_tones(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -17,6 +17,7 @@
 #include "core/audio_path.h"
 #include "core/audio_stream.h"
 #include "interfaces/delays.h"
+#include "protocols/TETRA/TetraTones.h"
 #ifdef __ZEPHYR__
 #include <zephyr/sys/printk.h>
 #define STATS_PRINT printk
@@ -51,6 +52,11 @@ static pthread_attr_t attr;
 static volatile bool running;
 static volatile bool stopRequest;
 static volatile bool playing; /* Speech on the speaker */
+
+/* Call tones: on or off, and the one asked for, -1 none */
+#define TONE_TAIL_FRAMES 3 /* Silence kept after a tone heard alone */
+static volatile bool tonesOn = true;
+static volatile int toneAsked = -1;
 
 /*
  * Console figures, every STATS_MS while traffic arrives: traffic slots, the
@@ -145,17 +151,43 @@ static void playBurst(void)
     outputStream_sync(stream, false);
     playing = true;
 
+    /*
+     * A call tone goes ahead of the speech, which waits in its queue; a
+     * burst of a tone alone ends shortly after it, one with speech after a
+     * second of silence
+     */
+    const struct tetraToneSound *tone = NULL;
+    size_t tonePos = 0;
+    bool speech = false;
     unsigned silence = 0;
-    while (!stopRequest && silence < SILENCE_FRAMES
-           && audioPath_getStatus(path) == PATH_OPEN) {
+    while (!stopRequest && audioPath_getStatus(path) == PATH_OPEN
+           && silence < (speech ? SILENCE_FRAMES : TONE_TAIL_FRAMES)) {
         stream_sample_t *out = outputStream_getIdleBuffer(stream);
         if (out == NULL)
             break;
 
+        int asked = toneAsked;
+        if (asked >= 0) {
+            toneAsked = -1;
+            tone = &tetraToneSounds[asked];
+            tonePos = 0;
+        }
+
         struct frame f;
-        if (pop(&f)) {
+        if (tone != NULL) {
+            size_t n = tone->len - tonePos;
+            if (n > OA_FRAME_SAMPLES)
+                n = OA_FRAME_SAMPLES;
+            memcpy(out, tone->samples + tonePos, n * sizeof(*out));
+            memset(out + n, 0, (OA_FRAME_SAMPLES - n) * sizeof(*out));
+            tonePos += n;
+            if (tonePos >= tone->len)
+                tone = NULL;
+            silence = 0;
+        } else if (pop(&f)) {
             oa_dec_frame(&decoder, f.bits, f.bfi, out);
             statPlayed++;
+            speech = true;
             silence = 0;
         } else {
             memset(out, 0, OA_FRAME_SAMPLES * sizeof(*out));
@@ -178,7 +210,7 @@ static void *playback(void *arg)
 {
     (void)arg;
     while (!stopRequest) {
-        if (queued() >= PREBUFFER_FRAMES)
+        if (queued() >= PREBUFFER_FRAMES || toneAsked >= 0)
             playBurst();
         else
             sleepFor(0, 10);
@@ -295,6 +327,24 @@ void tetraSpeech_traffic(const struct tetra_traffic *t,
     pthread_mutex_unlock(&queueMutex);
 }
 
+void tetraSpeech_tone(int tone)
+{
+    if (tonesOn && running && tone >= 0 && tone < TETRA_TONE_NUM)
+        toneAsked = tone;
+}
+
+void tetraSpeech_setTones(bool on)
+{
+    tonesOn = on;
+    if (!on)
+        toneAsked = -1;
+}
+
+bool tetraSpeech_tones(void)
+{
+    return tonesOn;
+}
+
 int tetraSpeech_probe(const struct tetra_traffic *t)
 {
     /* The workspace is scratch, and rtx thread only as here */
@@ -305,6 +355,21 @@ int tetraSpeech_probe(const struct tetra_traffic *t)
 #else /* CONFIG_TETRA_SPEECH */
 
 #include <string.h>
+
+void tetraSpeech_tone(int tone)
+{
+    (void)tone;
+}
+
+void tetraSpeech_setTones(bool on)
+{
+    (void)on;
+}
+
+bool tetraSpeech_tones(void)
+{
+    return false;
+}
 
 int tetraSpeech_probe(const struct tetra_traffic *t)
 {

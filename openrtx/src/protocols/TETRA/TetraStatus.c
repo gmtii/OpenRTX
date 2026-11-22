@@ -15,6 +15,7 @@
 #include "protocols/TETRA/TetraSds.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraStatus.h"
+#include "protocols/TETRA/TetraTones.h"
 #ifdef __ZEPHYR__
 #include <zephyr/sys/printk.h>
 #define CALL_PRINT printk
@@ -155,6 +156,35 @@ static bool leftOut(uint32_t dst, bool group)
 }
 
 static struct knownCall calls[MAX_CALLS]; /* Under statusMutex */
+
+/*
+ * Call tones: the set-up of a call that would be played (speech, clear or
+ * encrypted ones played, through the group selection and exclusions) gets
+ * its tone, the priority one from priority 12 (pre-emptive, emergency);
+ * the release of that call gets its own. Under statusMutex.
+ */
+#define PRIORITY_TONE 12
+static uint16_t tonedCall;
+static bool toned;
+
+/* Under statusMutex */
+static void callTone(const struct tetra_call *c)
+{
+    if (c->what == TETRA_CALL_SETUP) {
+        if ((toned && c->call_id == tonedCall) || c->circuit_type != 0
+            || (c->encrypted && !playEncrypted)
+            || leftOut(c->dst_ssi, c->group))
+            return;
+        tonedCall = c->call_id;
+        toned = true;
+        tetraSpeech_tone((c->priority >= PRIORITY_TONE) ? TETRA_TONE_PRIORITY
+                                                        : TETRA_TONE_SETUP);
+    } else if (c->what == TETRA_CALL_RELEASE && toned
+               && c->call_id == tonedCall) {
+        toned = false;
+        tetraSpeech_tone(TETRA_TONE_RELEASED);
+    }
+}
 
 /*
  * A clear call set up on another carrier of the cell is followed there, one
@@ -495,6 +525,7 @@ static void onCall(const struct tetra_call *c)
 
     trackCall(c);
     tetraHeard_call(c);
+    callTone(c);
 
     /* Signalling of a second call, on other timeslots than the call being
      * played: listed, but the call card stays on the played one */
@@ -747,6 +778,7 @@ void tetraStatus_reset(void)
     memset(&status, 0, sizeof(status));
     memset(calls, 0, sizeof(calls));
     memset(learnRun, 0, sizeof(learnRun));
+    toned = false;
     /* A new frequency is a new cell: nothing to follow from the old one */
     memset(&follow, 0, sizeof(follow));
     pthread_mutex_unlock(&statusMutex);
