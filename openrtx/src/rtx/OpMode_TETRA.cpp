@@ -18,6 +18,7 @@
 #include "protocols/TETRA/TetraScan.h"
 #include "protocols/TETRA/TetraSpeech.h"
 #include "protocols/TETRA/TetraStatus.h"
+#include "protocols/TETRA/TetraTones.h"
 #include "rtx/OpMode_TETRA.hpp"
 #ifdef CONFIG_TETRA_AFC
 #include <math.h>
@@ -448,6 +449,7 @@ void OpMode_TETRA::scanEnd(rtxStatus_t *const rtx)
         tetraStatus_reset();
         roamPending = true;
         tetraRoam_moved(mainHz);
+        tetraSpeech_tone(TETRA_TONE_ROAMING);
     }
     resync(false);
     tetraStatus_scanDone();
