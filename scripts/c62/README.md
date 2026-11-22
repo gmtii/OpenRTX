@@ -675,6 +675,23 @@ follows the keys and the timer only, whatever is received. The LED and
 the audio are not affected. The TETRA roaming (section 5) is a saved
 setting too.
 
+**Power-on code.** **Settings > Radio > Boot PIN** sets a 4-digit code
+asked at every power on: ENTER, the four digits (UP or DOWN deletes the
+last one) and ENTER set it, ENTER with no digit turns it off, ESC leaves
+it as it was. With a code set, the radio starts on a code screen and
+neither receives nor transmits, and no other screen or macro opens, until
+the four digits are typed: the right code starts it, a wrong one clears
+the boxes (`Wrong code`), and after three wrong ones in a row the keys
+wait 30 s. The code is kept in a record of its own, like the DMR
+settings. A code forgotten: erase the settings area, which brings the
+settings, the VFO, the DMR settings, the TETRA frequency correction and
+the code back to their defaults and keeps the memories (radio in burn
+mode, section 2):
+
+```bash
+cskburn -s /dev/ttyUSB0 -C 6 -b 115200 -v --erase 0x2b0000:0x4000
+```
+
 ## 11. Channel memories
 
 The 128 memories keep their place, M001 to M128, shown by pages of a

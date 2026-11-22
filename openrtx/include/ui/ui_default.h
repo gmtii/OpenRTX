@@ -61,7 +61,8 @@ enum uiScreen
     SPECTRUM,
     CHANNEL_SAVE,
     FM_RADIO,
-    SETTINGS_TETRA
+    SETTINGS_TETRA,
+    BOOT_PIN
 };
 
 /* TETRA pages of the VFO screen */
@@ -173,6 +174,9 @@ enum settingsRadioItems
     R_OFFSET,
     R_DIRECTION,
     R_STEP,
+#ifdef CONFIG_BOOT_PIN
+    R_BOOT_PIN,
+#endif
 };
 
 #ifdef CONFIG_TETRA
@@ -338,6 +342,16 @@ typedef struct ui_state_t
     bool tetra_hash_held;
     // Cells tuned by roaming that the VFO followed
     uint32_t tetra_roam_seen;
+#ifdef CONFIG_BOOT_PIN
+    // Power-on code: digits typed (asked, or set in Settings > Radio), the
+    // wrong codes in a row, the end of the wait after three, and whether
+    // the last one was wrong
+    char pin_buf[5];
+    uint8_t pin_len;
+    uint8_t pin_fails;
+    long long pin_wait_until;
+    bool pin_wrong;
+#endif
 #endif
 #ifdef CONFIG_SPECTRUM
     // Spectrum screen: range swept, marker point, sweeps drawn

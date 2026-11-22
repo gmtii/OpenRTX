@@ -82,6 +82,12 @@ extern const struct BK4819 c62_bk4819;
  * is not turned off with the knob (battery removed or flat)
  */
 #define CONFIG_NVM_SAVE_ON_CHANGE
+
+/*
+ * A 4-digit code asked at power on, set in Settings > Radio: without it the
+ * radio neither receives nor transmits
+ */
+#define CONFIG_BOOT_PIN
 extern const struct gpioDev c62_bk4819_gpio;
 extern const struct BK1080 c62_bk1080;
 

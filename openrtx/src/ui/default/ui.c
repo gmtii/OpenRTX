@@ -126,6 +126,9 @@ extern void _ui_drawSettingsRadio(ui_state_t* ui_state);
 #ifdef CONFIG_TETRA
 extern void _ui_drawSettingsTetra(ui_state_t* ui_state);
 #endif
+#ifdef CONFIG_BOOT_PIN
+extern void _ui_drawBootPin(void);
+#endif
 extern bool _ui_drawMacroMenu(ui_state_t* ui_state);
 #ifdef CONFIG_UI_SAVE_CHANNEL
 extern void _ui_drawChannelSave(ui_state_t* ui_state);
@@ -208,6 +211,9 @@ const char *settings_radio_items[] =
     "Offset",
     "Direction",
     "Step",
+#ifdef CONFIG_BOOT_PIN
+    "Boot PIN",
+#endif
 };
 
 #ifdef CONFIG_TETRA
@@ -2456,6 +2462,11 @@ void ui_init()
     // This syntax is called compound literal
     // https://stackoverflow.com/questions/6891720/initialize-reset-struct-to-zero-null
     ui_state = (const struct ui_state_t){ 0 };
+#ifdef CONFIG_BOOT_PIN
+    // A power-on code set: it is asked before anything else
+    if(state.boot_locked)
+        state.ui_screen = BOOT_PIN;
+#endif
 }
 
 void ui_drawSplashScreen()
@@ -2548,6 +2559,119 @@ static enum vpGPSInfoFlags GetGPSDirectionOrSpeedChanged()
 }
 #endif // CONFIG_GPS
 
+#ifdef CONFIG_BOOT_PIN
+/* Wrong codes in a row before a wait, and the wait */
+#define PIN_TRIES 3
+#define PIN_WAIT_MS 30000
+
+static uint16_t _ui_pinValue(void)
+{
+    return (uint16_t)atoi(ui_state.pin_buf);
+}
+
+static void _ui_pinClear(void)
+{
+    memset(ui_state.pin_buf, 0, sizeof(ui_state.pin_buf));
+    ui_state.pin_len = 0;
+}
+
+/**
+ * The digits of a code being typed: a number adds one, up to 4, UP or DOWN
+ * deletes the last one.
+ *
+ * @return true if the key was one of those.
+ */
+static bool _ui_pinType(kbd_msg_t msg)
+{
+    if(input_isNumberPressed(msg) && !msg.long_press)
+    {
+        if(ui_state.pin_len < 4)
+        {
+            ui_state.pin_buf[ui_state.pin_len++] =
+                (char)('0' + input_getPressedNumber(msg));
+            ui_state.pin_buf[ui_state.pin_len] = '\0';
+        }
+        return true;
+    }
+    if(msg.keys & (KEY_UP | KEY_DOWN))
+    {
+        if(ui_state.pin_len > 0)
+            ui_state.pin_buf[--ui_state.pin_len] = '\0';
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Power-on code screen: the 4 digits, checked on the last one. The right
+ * code lets the radio start; after three wrong ones the keys wait 30 s.
+ */
+static void _ui_fsm_bootPin(kbd_msg_t msg, bool *sync_rtx)
+{
+    if(msg.keys == 0 || getTick() < ui_state.pin_wait_until)
+        return;
+
+    if(msg.keys & KEY_ESC)
+    {
+        _ui_pinClear();
+        ui_state.pin_wrong = false;
+        return;
+    }
+    if(!_ui_pinType(msg))
+        return;
+    // A new code being typed: the wrong one is forgotten
+    if(ui_state.pin_len > 0)
+        ui_state.pin_wrong = false;
+    if(ui_state.pin_len < 4)
+        return;
+
+    if(_ui_pinValue() == state.boot_pin)
+    {
+        _ui_pinClear();
+        ui_state.pin_fails = 0;
+        ui_state.pin_wrong = false;
+        state.boot_locked = false;
+        state.ui_screen = MAIN_VFO;
+        *sync_rtx = true;
+        vp_beep(BEEP_FUNCTION_LATCH_ON, LONG_BEEP);
+        return;
+    }
+
+    _ui_pinClear();
+    ui_state.pin_wrong = true;
+    vp_beep(BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
+    if(++ui_state.pin_fails >= PIN_TRIES)
+    {
+        ui_state.pin_fails = 0;
+        ui_state.pin_wait_until = getTick() + PIN_WAIT_MS;
+    }
+}
+
+/**
+ * The code being typed in Settings > Radio > Boot PIN, for the value
+ * column: NULL when it is not being edited.
+ */
+const char *_ui_bootPinEdit(void)
+{
+    if((state.ui_screen != SETTINGS_RADIO) || !ui_state.edit_mode
+       || (ui_state.menu_selected != R_BOOT_PIN))
+        return NULL;
+    return ui_state.pin_buf;
+}
+
+/**
+ * The power-on code screen, for the drawing: digits typed, whether the
+ * last code was wrong, seconds left of the wait.
+ */
+void _ui_bootPinState(uint8_t *len, bool *wrong, int *waitS)
+{
+    long long left = ui_state.pin_wait_until - getTick();
+    *len = ui_state.pin_len;
+    *wrong = ui_state.pin_wrong;
+    *waitS = (left > 0) ? (int)((left + 999) / 1000) : 0;
+}
+#endif
+
 void ui_updateFSM(bool *sync_rtx)
 {
 #ifdef CONFIG_SPECTRUM
@@ -2573,6 +2697,21 @@ void ui_updateFSM(bool *sync_rtx)
     // UI redraw request is cancelled if we're in standby mode.
     redraw_needed = true;
     if(standby) redraw_needed = false;
+
+#ifdef CONFIG_BOOT_PIN
+    // The power-on code first: no macro menu, no low battery screen, no
+    // other screen until it is given
+    if(state.ui_screen == BOOT_PIN)
+    {
+        if(event.type == EVENT_KBD)
+        {
+            kbd_msg_t msg;
+            msg.value = event.payload;
+            _ui_fsm_bootPin(msg, sync_rtx);
+        }
+        return;
+    }
+#endif
 
     // Check if battery has enough charge to operate.
     // Check is skipped if there is an ongoing transmission, since the voltage
@@ -3660,11 +3799,40 @@ void ui_updateFSM(bool *sync_rtx)
                                 state.step_index %= n_freq_steps;
                             }
                             break;
+#ifdef CONFIG_BOOT_PIN
+                        case R_BOOT_PIN:
+                            // 4 digits and ENTER set the code, ENTER alone
+                            // turns it off, ESC leaves it as it was
+                            if(msg.keys & KEY_ENTER)
+                            {
+                                if(ui_state.pin_len == 4)
+                                {
+                                    state.boot_pin = _ui_pinValue();
+                                    ui_state.edit_mode = false;
+                                    vp_beep(BEEP_FUNCTION_LATCH_ON, LONG_BEEP);
+                                }
+                                else if(ui_state.pin_len == 0)
+                                {
+                                    state.boot_pin = BOOT_PIN_OFF;
+                                    ui_state.edit_mode = false;
+                                    vp_beep(BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
+                                }
+                            }
+                            else
+                                _ui_pinType(msg);
+                            break;
+#endif
                         default:
                             state.ui_screen = SETTINGS_RADIO;
                     }
-                    // If ENTER or ESC are pressed, exit edit mode, R_OFFSET is managed separately
-                    if((ui_state.menu_selected != R_OFFSET && msg.keys & KEY_ENTER) || msg.keys & KEY_ESC)
+                    // If ENTER or ESC are pressed, exit edit mode, R_OFFSET
+                    // and the boot PIN are managed separately
+                    bool ownEnter = (ui_state.menu_selected == R_OFFSET);
+#ifdef CONFIG_BOOT_PIN
+                    ownEnter = ownEnter
+                            || (ui_state.menu_selected == R_BOOT_PIN);
+#endif
+                    if((!ownEnter && msg.keys & KEY_ENTER) || msg.keys & KEY_ESC)
                         ui_state.edit_mode = false;
                 }
                 else if(msg.keys & KEY_UP || msg.keys & KNOB_LEFT)
@@ -3676,6 +3844,10 @@ void ui_updateFSM(bool *sync_rtx)
                     // If we are entering R_OFFSET clear temp offset
                     if (ui_state.menu_selected == R_OFFSET)
                         ui_state.new_offset = 0;
+#ifdef CONFIG_BOOT_PIN
+                    if (ui_state.menu_selected == R_BOOT_PIN)
+                        _ui_pinClear();
+#endif
                     // Reset input position
                     ui_state.input_position = 0;
                 }
@@ -4238,6 +4410,12 @@ bool ui_updateGUI()
         // TETRA settings screen
         case SETTINGS_TETRA:
             _ui_drawSettingsTetra(&ui_state);
+            break;
+#endif
+#ifdef CONFIG_BOOT_PIN
+        // Power-on code screen
+        case BOOT_PIN:
+            _ui_drawBootPin();
             break;
 #endif
         case SETTINGS_ACCESSIBILITY:

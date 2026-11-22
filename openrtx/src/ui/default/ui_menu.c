@@ -355,6 +355,26 @@ int _ui_getRadioValueName(char *buf, uint8_t max_len, uint8_t index)
     if(index >= settings_radio_num)
         return -1;
 
+#ifdef CONFIG_BOOT_PIN
+    // The power-on code: Off or On, the digits typed while editing it
+    if(index == R_BOOT_PIN)
+    {
+        extern const char *_ui_bootPinEdit(void);
+        const char *typed = _ui_bootPinEdit();
+        if(typed != NULL)
+        {
+            char d[5] = "____";
+            memcpy(d, typed, strlen(typed));
+            sniprintf(buf, max_len, "%s", d);
+        }
+        else
+            sniprintf(buf, max_len, "%s",
+                      (last_state.boot_pin == BOOT_PIN_OFF)
+                          ? currentLanguage->off : currentLanguage->on);
+        return 0;
+    }
+#endif
+
     // Only returning the sign
     if(index == R_DIRECTION)
     {
@@ -1701,3 +1721,46 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
 #endif
     return true;
 }
+
+#ifdef CONFIG_BOOT_PIN
+extern void _ui_bootPinState(uint8_t *len, bool *wrong, int *waitS);
+
+/**
+ * Power-on code screen: four boxes, filled as the digits are typed, and
+ * whether the last code was wrong or the keys wait.
+ */
+void _ui_drawBootPin(void)
+{
+    static const color_t red = { 224, 72, 72, 255 };
+    uint8_t len;
+    bool wrong;
+    int waitS;
+    _ui_bootPinState(&len, &wrong, &waitS);
+
+    gfx_clearScreen();
+    gfx_print(layout.top_pos, layout.top_font, TEXT_ALIGN_CENTER,
+              yellow_fab413, "OpenRTX");
+    gfx_print(layout.line1_pos, layout.line1_font, TEXT_ALIGN_CENTER,
+              color_white, "Code");
+
+    const int16_t w = 20, h = 24, gap = 8;
+    const int16_t x0 = (CONFIG_SCREEN_WIDTH - (4 * w + 3 * gap)) / 2;
+    const int16_t y0 = layout.line1_pos.y + 10;
+    for(int i = 0; i < 4; i++)
+    {
+        point_t p = { (int16_t)(x0 + i * (w + gap)), y0 };
+        gfx_drawRect(p, w, h, (i < len) ? yellow_fab413 : color_grey,
+                     i < len);
+    }
+
+    point_t m = { layout.horizontal_pad, (int16_t)(y0 + h + 22) };
+    if(waitS > 0)
+        gfx_print(m, FONT_SIZE_8PT, TEXT_ALIGN_CENTER, red, "Wait %d s",
+                  waitS);
+    else if(wrong)
+        gfx_print(m, FONT_SIZE_8PT, TEXT_ALIGN_CENTER, red, "Wrong code");
+    else
+        gfx_print(m, FONT_SIZE_6PT, TEXT_ALIGN_CENTER, color_grey,
+                  "UP: delete  ESC: clear");
+}
+#endif
