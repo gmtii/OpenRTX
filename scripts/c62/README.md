@@ -278,7 +278,9 @@ calls too, and those whose encryption is not known: end-to-end encrypted
 speech plays as noise, air-encrypted traffic as near silence. The call
 card still shows `Encrypted` or `Encrypted?`. On the uplink, speech is
 taken as encrypted for 30 s after a radio's call set-up or request to
-talk flags encryption, and played as clear otherwise.
+talk flags encryption, and played as clear otherwise. An uplink slot
+none of whose speech frames passes its CRC is not played: noise taken for
+a burst.
 
 **Tones** in Settings > TETRA plays short sounds on the speaker, ahead of
 the speech: one when a call that would be played is set up (speech,

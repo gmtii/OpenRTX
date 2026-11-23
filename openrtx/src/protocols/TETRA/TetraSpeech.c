@@ -60,11 +60,12 @@ static volatile int toneAsked = -1;
 
 /*
  * Console figures, every STATS_MS while traffic arrives: traffic slots, the
- * ones not played and why, speech frames queued (bad ones among them),
+ * ones not played and why (uplink slots with no good frame among them),
+ * speech frames queued (bad ones among them),
  * frames played and speaker openings that failed.
  */
 static volatile uint32_t statSlots, statEnc, statData, statUnknown,
-    statFiltered, statOther;
+    statFiltered, statOther, statNoise;
 static volatile uint32_t statQueued, statBad, statPlayed, statNoPath;
 static uint32_t statLastSlots;
 static long long statNext;
@@ -94,11 +95,13 @@ static void printStats(void)
     statLastSlots = statSlots;
 
     STATS_PRINT("TETRA speech: %lu slots (encrypted %lu, data %lu, "
-                "unknown call %lu, filtered %lu, second call %lu), "
+                "unknown call %lu, filtered %lu, second call %lu, "
+                "no good frame %lu), "
                 "%lu frames queued (bad %lu), %lu played, speaker busy %lu\n",
                 (unsigned long)statSlots, (unsigned long)statEnc,
                 (unsigned long)statData, (unsigned long)statUnknown,
                 (unsigned long)statFiltered, (unsigned long)statOther,
+                (unsigned long)statNoise,
                 (unsigned long)statQueued, (unsigned long)statBad,
                 (unsigned long)statPlayed, (unsigned long)statNoPath);
 }
@@ -229,7 +232,7 @@ void tetraSpeech_start(void)
     pthread_mutex_unlock(&queueMutex);
     stopRequest = false;
     statSlots = statEnc = statData = statUnknown = statFiltered = 0;
-    statOther = 0;
+    statOther = statNoise = 0;
     statQueued = statBad = statPlayed = statNoPath = 0;
     statLastSlots = 0;
 
@@ -279,8 +282,8 @@ void tetraSpeech_stop(void)
 #endif
 }
 
-void tetraSpeech_traffic(const struct tetra_traffic *t,
-                         enum tetraTrafficCall call)
+static void queueTraffic(const struct tetra_traffic *t,
+                         enum tetraTrafficCall call, bool uplink)
 {
     if (!running)
         return;
@@ -307,7 +310,12 @@ void tetraSpeech_traffic(const struct tetra_traffic *t,
     }
 
     struct tetra_speech sp;
-    tetra_speech_decode(&channelWs, t, &sp);
+    int good = tetra_speech_decode(&channelWs, t, &sp);
+    /* Uplink: nothing played from a slot with no good frame */
+    if (uplink && good == 0) {
+        statNoise++;
+        return;
+    }
 
     pthread_mutex_lock(&queueMutex);
     for (int i = 0; i < 2; i++) {
@@ -325,6 +333,18 @@ void tetraSpeech_traffic(const struct tetra_traffic *t,
             statBad++;
     }
     pthread_mutex_unlock(&queueMutex);
+}
+
+void tetraSpeech_traffic(const struct tetra_traffic *t,
+                         enum tetraTrafficCall call)
+{
+    queueTraffic(t, call, false);
+}
+
+void tetraSpeech_uplinkTraffic(const struct tetra_traffic *t,
+                               enum tetraTrafficCall call)
+{
+    queueTraffic(t, call, true);
 }
 
 void tetraSpeech_tone(int tone)
@@ -397,6 +417,13 @@ void tetraSpeech_getStats(struct tetraSpeechStats *out)
 
 void tetraSpeech_traffic(const struct tetra_traffic *t,
                          enum tetraTrafficCall call)
+{
+    (void)t;
+    (void)call;
+}
+
+void tetraSpeech_uplinkTraffic(const struct tetra_traffic *t,
+                               enum tetraTrafficCall call)
 {
     (void)t;
     (void)call;

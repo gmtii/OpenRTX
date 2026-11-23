@@ -89,6 +89,17 @@ void tetraSpeech_traffic(const struct tetra_traffic *t,
                          enum tetraTrafficCall call);
 
 /**
+ * Queue the speech frames of a traffic slot of the uplink, as
+ * tetraSpeech_traffic(). A slot none of whose speech frames passes its CRC
+ * is not played: noise taken for a burst, or a burst lost.
+ *
+ * @param t: traffic slot.
+ * @param call: whether the slot is played (TETRA_TRAFFIC_CLEAR) or not.
+ */
+void tetraSpeech_uplinkTraffic(const struct tetra_traffic *t,
+                               enum tetraTrafficCall call);
+
+/**
  * Decode the speech frames of a traffic slot without playing them, to tell
  * clear speech (the frames pass their CRC) from air-encrypted traffic (it
  * is noise to the decoder). From the libtetra event callback.

@@ -584,7 +584,8 @@ static void ulNote(uint32_t src, uint32_t dst, bool group, uint8_t what)
  * calls on the downlink are tracked by their identifier and timeslots,
  * which the uplink does not always carry: its calls go to the lists of
  * radios, groups and calls heard and to the uplink line, not to the call
- * card. Its clear speech is played as it comes.
+ * card. Its clear speech is played as it comes, but for slots with no
+ * good speech frame.
  */
 static void onUplink(const struct tetra_event *ev)
 {
@@ -596,7 +597,7 @@ static void onUplink(const struct tetra_event *ev)
                 || (ulEncrypted && getTick() - ulCipherAt < UL_CIPHER_MS);
         bool play = !enc || playEncrypted;
         pthread_mutex_unlock(&statusMutex);
-        tetraSpeech_traffic(&ev->u.traffic, play ? TETRA_TRAFFIC_CLEAR
+        tetraSpeech_uplinkTraffic(&ev->u.traffic, play ? TETRA_TRAFFIC_CLEAR
                                                  : TETRA_TRAFFIC_ENCRYPTED);
     }
 
