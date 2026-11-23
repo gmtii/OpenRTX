@@ -1702,6 +1702,34 @@ static void _ui_setTetraRoam(bool on)
     vp_beep(on ? BEEP_FUNCTION_LATCH_ON : BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
 }
 
+#ifdef CONFIG_TETRA_AFC
+static void _ui_setTetraAfc(bool on)
+{
+    state.settings.tetraAfcOff = on ? 0 : 1;
+    vp_beep(on ? BEEP_FUNCTION_LATCH_ON : BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
+}
+#endif
+
+/* The call tones: kept in the settings, so on again after a power cycle */
+static void _ui_setTetraTones(bool on)
+{
+    state.settings.tetraTonesOff = on ? 0 : 1;
+    tetraSpeech_setTones(on);
+    vp_beep(on ? BEEP_FUNCTION_LATCH_ON : BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
+}
+
+static void _ui_setTetraLateCalls(bool on)
+{
+    tetraStatus_setLateCalls(on);
+    vp_beep(on ? BEEP_FUNCTION_LATCH_ON : BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
+}
+
+static void _ui_setTetraEncrypted(bool on)
+{
+    tetraStatus_setPlayEncrypted(on);
+    vp_beep(on ? BEEP_FUNCTION_LATCH_ON : BEEP_FUNCTION_LATCH_OFF, LONG_BEEP);
+}
+
 /**
  * Roaming on in the settings: start it on the first cell received, and
  * again on a cell of another network tuned by hand. The TETRA mode stops
@@ -2462,6 +2490,9 @@ void ui_init()
     // This syntax is called compound literal
     // https://stackoverflow.com/questions/6891720/initialize-reset-struct-to-zero-null
     ui_state = (const struct ui_state_t){ 0 };
+#ifdef CONFIG_TETRA
+    tetraSpeech_setTones(!state.settings.tetraTonesOff);
+#endif
 #ifdef CONFIG_BOOT_PIN
     // A power-on code set: it is asked before anything else
     if(state.boot_locked)
@@ -3876,41 +3907,19 @@ void ui_updateFSM(bool *sync_rtx)
                             break;
 #ifdef CONFIG_TETRA_AFC
                         case T_AFC:
-                            state.settings.tetraAfcOff =
-                                !state.settings.tetraAfcOff;
-                            vp_beep(state.settings.tetraAfcOff
-                                        ? BEEP_FUNCTION_LATCH_OFF
-                                        : BEEP_FUNCTION_LATCH_ON,
-                                    LONG_BEEP);
+                            _ui_setTetraAfc(state.settings.tetraAfcOff);
                             break;
 #endif
                         case T_LATE_CALLS:
-                        {
-                            const bool on = !tetraStatus_lateCalls();
-                            tetraStatus_setLateCalls(on);
-                            vp_beep(on ? BEEP_FUNCTION_LATCH_ON
-                                       : BEEP_FUNCTION_LATCH_OFF,
-                                    LONG_BEEP);
+                            _ui_setTetraLateCalls(!tetraStatus_lateCalls());
                             break;
-                        }
                         case T_ENCRYPTED:
-                        {
-                            const bool on = !tetraStatus_playEncrypted();
-                            tetraStatus_setPlayEncrypted(on);
-                            vp_beep(on ? BEEP_FUNCTION_LATCH_ON
-                                       : BEEP_FUNCTION_LATCH_OFF,
-                                    LONG_BEEP);
+                            _ui_setTetraEncrypted(
+                                !tetraStatus_playEncrypted());
                             break;
-                        }
                         case T_TONES:
-                        {
-                            const bool on = !tetraSpeech_tones();
-                            tetraSpeech_setTones(on);
-                            vp_beep(on ? BEEP_FUNCTION_LATCH_ON
-                                       : BEEP_FUNCTION_LATCH_OFF,
-                                    LONG_BEEP);
+                            _ui_setTetraTones(!tetraSpeech_tones());
                             break;
-                        }
                         default:
                             break;
                     }

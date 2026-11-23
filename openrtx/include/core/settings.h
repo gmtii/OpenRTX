@@ -56,7 +56,8 @@ typedef struct
     bool    m17_can_rx;           // Check M17 CAN on RX
     char    m17_dest[10];         // M17 destination
     bool    showBatteryIcon;      // Battery display true: icon, false: percentage
-    bool    gpsSetTime;           // Use GPS to ajust RTC time
+    uint8_t gpsSetTime      : 1,  // Use GPS to ajust RTC time
+            tetraTonesOff   : 1;  // TETRA call tones off
     char    M17_meta_text[53];    // M17 Meta Text to send
 }
 __attribute__((packed)) settings_t;
@@ -86,7 +87,8 @@ static const settings_t default_settings =
     false,                        // Check M17 CAN on RX
     "",                           // Empty M17 destination
     false,                        // Display battery icon
-    false,                        // Update RTC with GPS
+    0,                            // Update RTC with GPS
+    0,                            // TETRA call tones on
     "OpenRTX",                    // Default M17 meta text
 };
 
