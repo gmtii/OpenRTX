@@ -16,11 +16,14 @@
  * the cell, then the uplink: two radios, each with its own timing, carrier
  * offset and level, in bursts with silence between them.
  *
- *   tetra_ul_sim [snr_dB] [seed] [burst] [radios]
+ *   tetra_ul_sim [snr_dB] [seed] [burst] [radios] [b_slot] [b_dB]
  *
- * snr_dB: signal to noise ratio of radio A in a 25 kHz channel (radio B is
- * 6 dB weaker); burst: 1 to put the demodulator in burst mode on the uplink;
- * radios: 1 radio A only, 2 radio B only, 3 both (default).
+ * snr_dB: signal to noise ratio of radio A in a 25 kHz channel; burst: 1 to
+ * put the demodulator in burst mode on the uplink; radios: 1 radio A only,
+ * 2 radio B only, 3 both (default); b_slot: timeslot of radio B, 3 (default,
+ * a free slot each side), 2 (right after radio A, only the guard between
+ * them, as two radios on consecutive slots) or 0 (right before radio A);
+ * b_dB: level of radio B against radio A (default -6).
  */
 
 #include <complex.h>
@@ -32,6 +35,7 @@
 #include <string.h>
 #include <tetra/tetra.h>
 #include <tetra/tetra_coding.h>
+#include <tetra/tetra_speech.h>
 #include <tetra/tetra_tx.h>
 #include "protocols/TETRA/TetraDemod.h"
 
@@ -305,6 +309,9 @@ static size_t frontEnd(int16_t *out)
 /* ---- Decoded events ---- */
 
 static unsigned evDemand, evSds, evTraffic, evUplink, evSync;
+/* Traffic slots with no speech frame passing its CRC: noise or a lost one */
+static unsigned evTrafficBad;
+static struct tetra_speech_ws speechWs;
 
 static void onEvent(void *user, const struct tetra_event *ev)
 {
@@ -322,9 +329,13 @@ static void onEvent(void *user, const struct tetra_event *ev)
         case TETRA_EV_SDS:
             evSds++;
             break;
-        case TETRA_EV_TRAFFIC:
+        case TETRA_EV_TRAFFIC: {
+            struct tetra_speech sp;
             evTraffic++;
+            if (tetra_speech_decode(&speechWs, &ev->u.traffic, &sp) == 0)
+                evTrafficBad++;
             break;
+        }
         default:
             break;
     }
@@ -336,6 +347,10 @@ int main(int argc, char **argv)
     unsigned seed = (argc > 2) ? (unsigned)atoi(argv[2]) : 1;
     bool burst = (argc > 3) && atoi(argv[3]) != 0;
     int radios = (argc > 4) ? atoi(argv[4]) : 3;
+    int bSlot = (argc > 5) ? atoi(argv[5]) : 3;
+    double bDb = (argc > 6) ? atof(argv[6]) : -6;
+    if (bSlot != 0 && bSlot != 2 && bSlot != 3)
+        bSlot = 3;
     for (unsigned i = 0; i < seed; i++)
         urand();
 
@@ -367,12 +382,15 @@ int main(int argc, char **argv)
         p += crealf(iq[n] * conjf(iq[n]));
     sigPow = p / (dlSamples / 2);
 
-    /* Uplink: radio A on timeslot 1, radio B on timeslot 3 */
+    /* Uplink: radio A on timeslot 1, radio B on timeslot b_slot */
     uint32_t scramb = tetra_scramb_init(tetra_tmo_colour_code(MCC, MNC, CC));
     double tA = urand() * SPS, tB = urand() * SPS * 40;
+    /* Next to radio A: within a few symbols of the slot timing */
+    if (bSlot != 3)
+        tB = urand() * SPS * 4;
     double fA = RADIO_OFFSET + 200 * (urand() - 0.5);
     double fB = RADIO_OFFSET + 200 * (urand() - 0.5);
-    double ampA = 1.0, ampB = pow(10, -6 / 20.0);
+    double ampA = 1.0, ampB = pow(10, bDb / 20.0);
     unsigned sentDemand = 0, sentSds = 0, sentTraffic = 0;
     uint16_t callId = 100;
     for (unsigned f = 0; f < UL_FRAMES; f++) {
@@ -410,8 +428,10 @@ int main(int argc, char **argv)
             tetra_encode_sch(TETRA_SCH_HU, m.b, scramb, cb);
             tetra_tmo_build_cb(cbBits, cb);
             ph = urand() * 2 * M_PI;
+            /* Before radio A: in the second subslot, ending at its slot */
+            double at = bSlot * SLOT_SYM + (bSlot == 0 ? SLOT_SYM / 2 : 0);
             render(cbBits, TETRA_CB_BITS, 5,
-                   frame + (3 * SLOT_SYM + 17) * SPS + tB, ampB, fB, &ph);
+                   frame + (at + 17) * SPS + tB, ampB, fB, &ph);
             sentDemand++;
         }
     }
@@ -463,8 +483,10 @@ int main(int argc, char **argv)
     printf("SNR %.1f dB seed %u burst %d: radio A %+.0f Hz, radio B %+.0f Hz\n",
            snr, seed, burst, fA - RADIO_OFFSET, fB - RADIO_OFFSET);
     printf("  SDS      %3u/%3u\n", evSds, sentSds);
-    printf("  traffic  %3u/%3u\n", evTraffic, sentTraffic);
-    printf("  TX dem.  %3u/%3u (radio B, -6 dB)\n", evDemand, sentDemand);
+    printf("  traffic  %3u/%3u, %u with no good speech frame\n", evTraffic,
+           sentTraffic, evTrafficBad);
+    printf("  TX dem.  %3u/%3u (radio B, slot %d, %+.0f dB)\n", evDemand,
+           sentDemand, bSlot, bDb);
     printf("  uplink events %u, phase error %u%%\n", evUplink,
            tetraDemod_phaseError(&dm));
     free(iq);
