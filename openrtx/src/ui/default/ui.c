@@ -1984,6 +1984,30 @@ static void _ui_fsm_menuMacro(kbd_msg_t msg, bool *sync_rtx)
     // CTCSS Encode/Decode Selection
     enum vpQueueFlags queueFlags = vp_getVoiceLevelQueueFlags();
 
+#ifdef CONFIG_TETRA
+    // TETRA: 1 to 4 turn the options of Settings > TETRA on or off
+    if(state.channel.mode == OPMODE_TETRA)
+    {
+        switch(ui_state.input_number)
+        {
+            case 1:
+                _ui_setTetraRoam(!state.settings.tetraRoam);
+                break;
+            case 2:
+                _ui_setTetraTones(!tetraSpeech_tones());
+                break;
+            case 3:
+                _ui_setTetraLateCalls(!tetraStatus_lateCalls());
+                break;
+            case 4:
+                _ui_setTetraEncrypted(!tetraStatus_playEncrypted());
+                break;
+            default:
+                break;
+        }
+    }
+#endif
+
     switch(ui_state.input_number)
     {
         case 1:

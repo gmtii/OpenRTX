@@ -236,6 +236,9 @@ AFC** turns it off. Other modes get no correction.
 with ENTER: **Roaming** (below), **AFC** (above), **Late calls**,
 **Encrypted** and **Tones** (below). Roaming, AFC and Tones are kept
 across power cycles; Late calls and Encrypted are off (Mute) at power on.
+In TETRA the macro menu turns four of them on or off too: **1** Roaming,
+**2** Tones, **3** Late calls, **4** Encrypted, white when on and grey when
+off.
 
 Speech: clear (not encrypted) speech is played on the speaker. libtetra
 decodes each traffic slot into two speech frames, and

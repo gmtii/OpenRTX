@@ -1533,11 +1533,53 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
     point_t pos_2 = {layout.line1_pos.x, layout.line1_pos.y +
                     (layout.line3_large_pos.y - layout.line1_pos.y)/2};
 
+#ifdef CONFIG_TETRA
+    /*
+     * TETRA: the options of Settings > TETRA on 1 to 4, white when on,
+     * grey when off: roaming, call tones, late calls, encrypted calls.
+     */
+    if (last_state.channel.mode == OPMODE_TETRA)
+    {
+        const bool opt[4] = {
+            last_state.settings.tetraRoam,
+            tetraSpeech_tones(),
+            tetraStatus_lateCalls(),
+            tetraStatus_playEncrypted(),
+        };
+        static const char *const keys[4] = { "1", "2", "3", "4" };
+        static const char *const names[4] = { "Roam", "Tone", "Late", "Enc" };
+        const int16_t right = CONFIG_SCREEN_WIDTH - layout.horizontal_pad;
+        for (int i = 0; i < 4; i++)
+        {
+#if defined(CONFIG_UI_NO_KEYBOARD)
+            if (ui_state->macro_menu_selected != i)
+                continue;
+#endif
+            const int16_t wk = gfx_getTextWidth(layout.top_font, keys[i]);
+            const int16_t w = wk + 3
+                            + gfx_getTextWidth(layout.top_font, names[i]);
+            point_t p = (i < 3) ? layout.line1_pos : pos_2;
+            if (i == 1)
+                p.x = (CONFIG_SCREEN_WIDTH - w) / 2;
+            else if (i == 2)
+                p.x = right - w;
+            gfx_print(p, layout.top_font, TEXT_ALIGN_LEFT, yellow_fab413,
+                      "%s", keys[i]);
+            p.x += wk + 3;
+            gfx_print(p, layout.top_font, TEXT_ALIGN_LEFT,
+                      opt[i] ? color_white : color_grey, "%s", names[i]);
+        }
+    }
+    else
+#endif
+
+    {
 #if defined(CONFIG_UI_NO_KEYBOARD)
         if (ui_state->macro_menu_selected == 3)
 #endif // CONFIG_UI_NO_KEYBOARD
     gfx_print(pos_2, layout.top_font, TEXT_ALIGN_LEFT,
               yellow_fab413, "4");
+    }
 
     if (last_state.channel.mode == OPMODE_FM)
     {
@@ -1628,6 +1670,11 @@ bool _ui_drawMacroMenu(ui_state_t* ui_state)
     int16_t left = pos_2.x + gfx_getTextWidth(layout.top_font, "4");
     if (last_state.channel.mode == OPMODE_FM)
         left = pos_2.x + gfx_getTextWidth(layout.top_font, "  BW12.5");
+#ifdef CONFIG_TETRA
+    if (last_state.channel.mode == OPMODE_TETRA)
+        left = pos_2.x + gfx_getTextWidth(layout.top_font, "4") + 3
+             + gfx_getTextWidth(layout.top_font, "Enc");
+#endif
     left += 2 * gap;
 
     // The largest form of the mode name that fits between them
